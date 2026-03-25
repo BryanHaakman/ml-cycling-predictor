@@ -308,7 +308,9 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
     feature_names = get_all_feature_names()
 
     rows = []
-    for _, pair in tqdm(pairs_df.iterrows(), total=len(pairs_df), desc="Computing features"):
+    skipped = 0
+    total = len(pairs_df)
+    for i, (_, pair) in enumerate(tqdm(pairs_df.iterrows(), total=total, desc="Computing features")):
         fv = build_feature_vector(
             conn,
             pair["rider_a_url"],
@@ -316,11 +318,15 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
             pair["stage_url"],
         )
         if fv is None:
+            skipped += 1
             continue
 
         row = [fv.get(name, 0.0) for name in feature_names]
         row.append(pair["label"])
         rows.append(row)
+
+        if (i + 1) % 5000 == 0:
+            log.info(f"  Progress: {i+1}/{total} pairs processed, {len(rows)} kept, {skipped} skipped")
 
     conn.close()
 

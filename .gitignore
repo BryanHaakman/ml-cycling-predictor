@@ -20,3 +20,7 @@ models/trained/*.pt
 .DS_Store
 .vscode/
 .idea/
+
+# Data exports (timestamped backups)
+data/exports/*/
+!data/exports/latest/
