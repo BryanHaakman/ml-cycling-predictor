@@ -1,0 +1,22 @@
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Database WAL/SHM temp files
+data/cache.db-shm
+data/cache.db-wal
+
+# Trained model artifacts
+models/trained/*.pkl
+models/trained/*.pt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
