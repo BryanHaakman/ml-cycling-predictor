@@ -21,8 +21,8 @@ from data.scraper import scrape_years, get_stats
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scrape cycling race data from ProCyclingStats")
-    parser.add_argument("--years", nargs="+", type=int, default=list(range(2018, 2027)),
-                        help="Years to scrape (default: 2018-2026)")
+    parser.add_argument("--years", nargs="+", type=int, default=list(range(2026, 2017, -1)),
+                        help="Years to scrape (default: 2026-2018, newest first)")
     parser.add_argument("--all-tiers", action="store_true",
                         help="Scrape all tiers: WorldTour + ProSeries + Class 1 + Class 2")
     parser.add_argument("--major-only", action="store_true",

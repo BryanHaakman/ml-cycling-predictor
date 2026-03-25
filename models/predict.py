@@ -10,11 +10,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
-import torch
 
 from data.scraper import get_db, DB_PATH
 from features.pipeline import build_feature_vector, build_feature_vector_manual, get_all_feature_names
-from models.neural_net import CyclingNet, predict_neural_net
 
 log = logging.getLogger(__name__)
 
@@ -156,6 +154,8 @@ class Predictor:
             self.feature_names = json.load(f)
 
         if model_name == "NeuralNetwork":
+            import torch
+            from models.neural_net import CyclingNet
             input_dim = len(self.feature_names)
             self.model = CyclingNet(input_dim)
             state = torch.load(
@@ -200,6 +200,7 @@ class Predictor:
         X_scaled = self.scaler.transform(X)
 
         if self.model_name == "NeuralNetwork":
+            from models.neural_net import predict_neural_net
             prob_a = float(predict_neural_net(self.model, X_scaled)[0])
         else:
             prob_a = float(self.model.predict_proba(X_scaled)[0, 1])
@@ -263,6 +264,7 @@ class Predictor:
         X_scaled = self.scaler.transform(X)
 
         if self.model_name == "NeuralNetwork":
+            from models.neural_net import predict_neural_net
             prob_a = float(predict_neural_net(self.model, X_scaled)[0])
         else:
             prob_a = float(self.model.predict_proba(X_scaled)[0, 1])

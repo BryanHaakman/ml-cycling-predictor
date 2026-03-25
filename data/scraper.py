@@ -11,6 +11,7 @@ import time
 import json
 import logging
 import os
+import signal
 from datetime import datetime, date
 from typing import Optional
 
@@ -26,7 +27,8 @@ log = logging.getLogger(__name__)
 # Rate limiter
 # ---------------------------------------------------------------------------
 _last_request_time = 0.0
-REQUEST_DELAY = 1.2  # seconds between PCS requests
+REQUEST_DELAY = 0.5  # seconds between PCS requests
+MAX_RETRIES = 3      # retry on server errors
 
 
 def _rate_limit():
@@ -35,6 +37,50 @@ def _rate_limit():
     if elapsed < REQUEST_DELAY:
         time.sleep(REQUEST_DELAY - elapsed)
     _last_request_time = time.time()
+
+
+FETCH_TIMEOUT = 60  # seconds before we consider a request hung
+
+
+class _FetchTimeout(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise _FetchTimeout("Request timed out")
+
+
+def _pcs_fetch(pcs_class, url, retries=MAX_RETRIES):
+    """Fetch and parse a PCS page with automatic retry on server errors."""
+    for attempt in range(retries):
+        _rate_limit()
+        # Set an alarm so we don't hang forever
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(FETCH_TIMEOUT)
+        try:
+            obj = pcs_class(url)
+            signal.alarm(0)  # cancel alarm
+            return obj
+        except _FetchTimeout:
+            backoff = REQUEST_DELAY * (attempt + 2)
+            log.warning(f"Request timed out on {url}, retrying in {backoff:.1f}s (attempt {attempt+1}/{retries})")
+            time.sleep(backoff)
+            continue
+        except Exception as e:
+            signal.alarm(0)  # cancel alarm
+            err_str = str(e)
+            # Retry on server errors (500, 503, etc.) or Cloudflare blocks
+            if any(code in err_str for code in ["500", "502", "503", "429", "Cloudflare"]):
+                backoff = REQUEST_DELAY * (attempt + 2)
+                log.warning(f"Server error ({err_str[:60]}) on {url}, retrying in {backoff:.1f}s (attempt {attempt+1}/{retries})")
+                time.sleep(backoff)
+                continue
+            raise  # re-raise non-retryable errors
+        finally:
+            signal.signal(signal.SIGALRM, old_handler)
+    # Final attempt — let it raise
+    _rate_limit()
+    return pcs_class(url)
 
 
 # ---------------------------------------------------------------------------
@@ -281,8 +327,12 @@ def scrape_race_overview(conn: sqlite3.Connection, race_base_url: str, year: int
 
     _rate_limit()
     try:
-        race = Race(race_url)
-        data = race.parse()
+        race = _pcs_fetch(Race, race_url)
+        try:
+            data = race.parse()
+        except (ValueError, TypeError) as parse_err:
+            log.debug(f"Skipping {race_url}: incomplete data on PCS ({parse_err})")
+            return None
         conn.execute("""
             INSERT OR REPLACE INTO races (url, name, year, nationality, is_one_day_race,
                 category, uci_tour, startdate, enddate, scraped_at)
@@ -315,8 +365,22 @@ def scrape_stage(conn: sqlite3.Connection, stage_url: str, race_url: str) -> boo
 
     _rate_limit()
     try:
-        stage = Stage(stage_url)
-        data = stage.parse()
+        stage = _pcs_fetch(Stage, stage_url)
+        try:
+            data = stage.parse()
+        except (ValueError, TypeError) as parse_err:
+            # procyclingstats crashes on incomplete pages (e.g. float('-') for missing distance)
+            log.debug(f"Skipping {stage_url}: incomplete data on PCS ({parse_err})")
+            return False
+
+        def _safe_float(val):
+            """Convert to float, returning None for non-numeric values like '-'."""
+            if val is None:
+                return None
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
 
         climbs = data.get("climbs", [])
         num_climbs = len(climbs) if climbs else 0
@@ -336,12 +400,12 @@ def scrape_stage(conn: sqlite3.Connection, stage_url: str, race_url: str) -> boo
             stage_url, race_url,
             f"{data.get('departure', '')} → {data.get('arrival', '')}",
             data.get("date"),
-            data.get("distance"),
-            data.get("vertical_meters"),
-            data.get("profile_score"),
+            _safe_float(data.get("distance")),
+            _safe_float(data.get("vertical_meters")),
+            _safe_float(data.get("profile_score")),
             data.get("profile_icon"),
-            data.get("avg_speed_winner"),
-            data.get("avg_temperature"),
+            _safe_float(data.get("avg_speed_winner")),
+            _safe_float(data.get("avg_temperature")),
             data.get("departure"),
             data.get("arrival"),
             data.get("stage_type"),
@@ -377,9 +441,9 @@ def scrape_stage(conn: sqlite3.Connection, stage_url: str, race_url: str) -> boo
                 r.get("nationality"),
                 r.get("time"),
                 r.get("bonus"),
-                r.get("pcs_points"),
-                r.get("uci_points"),
-                r.get("breakaway_kms"),
+                _safe_float(r.get("pcs_points")),
+                _safe_float(r.get("uci_points")),
+                _safe_float(r.get("breakaway_kms")),
             ))
 
         conn.commit()
@@ -398,7 +462,7 @@ def scrape_rider(conn: sqlite3.Connection, rider_url: str) -> bool:
 
     _rate_limit()
     try:
-        rider = Rider(rider_url)
+        rider = _pcs_fetch(Rider, rider_url)
         data = rider.parse()
         spec = data.get("points_per_speciality", {}) or {}
         pts_history = data.get("points_per_season_history", [])
@@ -471,7 +535,7 @@ def scrape_full_race(conn: sqlite3.Connection, race_base_url: str, year: int, fo
         # Get stages from race overview
         _rate_limit()
         try:
-            race = Race(race_url)
+            race = _pcs_fetch(Race, race_url)
             stages = race.stages()
             for s in stages:
                 stage_url = s.get("stage_url")

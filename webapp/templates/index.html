@@ -200,19 +200,16 @@
                 </div>
             </div>
             <div class="form-group full">
-                <label>Race / Stage</label>
-                <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;">
-                    <button type="button" class="mode-btn active" id="mode-db" onclick="setRaceMode('db')">From Database</button>
-                    <button type="button" class="mode-btn" id="mode-manual" onclick="setRaceMode('manual')">Upcoming Race (Manual)</button>
+                <label>Race Setup</label>
+                <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;align-items:center;flex-wrap:wrap;">
+                    <select id="saved-race-select" style="flex:1;min-width:200px;padding:0.5rem 0.8rem;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;">
+                        <option value="">— New Race —</option>
+                    </select>
+                    <button type="button" class="mode-btn" id="btn-save-race" onclick="saveCurrentRace()" title="Save race config">💾 Save</button>
+                    <button type="button" class="mode-btn" id="btn-delete-race" onclick="deleteSelectedRace()" title="Delete saved race" style="display:none;">🗑️</button>
+                    <button type="button" class="mode-btn" id="mode-db" onclick="setRaceMode('db')">From Database</button>
                 </div>
-                <div id="race-db-section">
-                    <div class="autocomplete-wrap">
-                        <input type="text" id="race-input" placeholder="Search race..." autocomplete="off">
-                        <div class="autocomplete-list" id="race-list"></div>
-                        <input type="hidden" id="stage-url">
-                    </div>
-                </div>
-                <div id="race-manual-section" style="display:none;">
+                <div id="race-manual-section">
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;">
                         <div class="form-group">
                             <label>Race Name</label>
@@ -265,6 +262,13 @@
                         </div>
                     </div>
                 </div>
+                <div id="race-db-section" style="display:none;">
+                    <div class="autocomplete-wrap">
+                        <input type="text" id="race-input" placeholder="Search race from database..." autocomplete="off">
+                        <div class="autocomplete-list" id="race-list"></div>
+                        <input type="hidden" id="stage-url">
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -305,14 +309,110 @@
     </div>
 
     <script>
-        let raceMode = 'db'; // 'db' or 'manual'
+        let raceMode = 'manual'; // 'manual' or 'db'
 
         function setRaceMode(mode) {
             raceMode = mode;
             document.getElementById('mode-db').classList.toggle('active', mode === 'db');
-            document.getElementById('mode-manual').classList.toggle('active', mode === 'manual');
             document.getElementById('race-db-section').style.display = mode === 'db' ? '' : 'none';
             document.getElementById('race-manual-section').style.display = mode === 'manual' ? '' : 'none';
+            if (mode === 'db') {
+                document.getElementById('mode-db').textContent = '✓ From Database';
+            } else {
+                document.getElementById('mode-db').textContent = 'From Database';
+            }
+        }
+
+        // ── Saved Races ──
+        let _savedRaces = [];
+
+        async function loadSavedRaces() {
+            try {
+                _savedRaces = await fetch('/api/saved-races').then(r => r.json());
+                const sel = document.getElementById('saved-race-select');
+                sel.innerHTML = '<option value="">— New Race —</option>';
+                _savedRaces.forEach(r => {
+                    const opt = document.createElement('option');
+                    opt.value = r.id;
+                    const profile = r.profile_icon ? ` (${r.profile_icon})` : '';
+                    const dist = r.distance_km ? ` ${r.distance_km}km` : '';
+                    opt.textContent = `${r.name}${dist}${profile}`;
+                    sel.appendChild(opt);
+                });
+            } catch(e) {}
+        }
+
+        document.getElementById('saved-race-select').addEventListener('change', function() {
+            const id = parseInt(this.value);
+            const delBtn = document.getElementById('btn-delete-race');
+            if (!id) {
+                delBtn.style.display = 'none';
+                clearRaceForm();
+                return;
+            }
+            delBtn.style.display = '';
+            const race = _savedRaces.find(r => r.id === id);
+            if (!race) return;
+            setRaceMode('manual');
+            document.getElementById('manual-race-name').value = race.name || '';
+            document.getElementById('manual-distance').value = race.distance_km || '';
+            document.getElementById('manual-vert').value = race.vertical_meters || '';
+            document.getElementById('manual-profile').value = race.profile_icon || 'p3';
+            document.getElementById('manual-stage-type').value = race.stage_type || 'RR';
+            document.getElementById('manual-oneday').value = race.is_one_day_race ? '1' : '0';
+            document.getElementById('manual-climbs').value = race.num_climbs || '';
+            document.getElementById('manual-race-url').value = race.race_base_url || '';
+            document.getElementById('manual-race-date').value = race.race_date || new Date().toISOString().split('T')[0];
+        });
+
+        function clearRaceForm() {
+            document.getElementById('manual-race-name').value = '';
+            document.getElementById('manual-distance').value = '';
+            document.getElementById('manual-vert').value = '';
+            document.getElementById('manual-profile').value = 'p3';
+            document.getElementById('manual-stage-type').value = 'RR';
+            document.getElementById('manual-oneday').value = '0';
+            document.getElementById('manual-climbs').value = '';
+            document.getElementById('manual-race-url').value = '';
+            document.getElementById('manual-race-date').value = new Date().toISOString().split('T')[0];
+        }
+
+        async function saveCurrentRace() {
+            const name = document.getElementById('manual-race-name').value.trim();
+            if (!name) {
+                alert('Enter a race name first');
+                return;
+            }
+            const data = {
+                name: name,
+                distance_km: parseFloat(document.getElementById('manual-distance').value) || null,
+                vertical_meters: parseFloat(document.getElementById('manual-vert').value) || null,
+                profile_icon: document.getElementById('manual-profile').value,
+                stage_type: document.getElementById('manual-stage-type').value,
+                is_one_day_race: document.getElementById('manual-oneday').value === '1',
+                num_climbs: parseInt(document.getElementById('manual-climbs').value) || 0,
+                race_base_url: document.getElementById('manual-race-url').value || null,
+                race_date: document.getElementById('manual-race-date').value || null,
+            };
+            const res = await fetch('/api/saved-races', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data),
+            });
+            const result = await res.json();
+            if (result.error) { alert(result.error); return; }
+            await loadSavedRaces();
+            document.getElementById('saved-race-select').value = result.id;
+            document.getElementById('btn-delete-race').style.display = '';
+        }
+
+        async function deleteSelectedRace() {
+            const sel = document.getElementById('saved-race-select');
+            const id = parseInt(sel.value);
+            if (!id) return;
+            if (!confirm('Delete this saved race?')) return;
+            await fetch(`/api/saved-races/${id}`, { method: 'DELETE' });
+            await loadSavedRaces();
+            clearRaceForm();
         }
 
         // Set default date to today
@@ -337,7 +437,7 @@
                         const div = document.createElement('div');
                         div.className = 'autocomplete-item';
                         const label = item.name || item.label;
-                        const sub = item.nationality || item.distance ? `${item.distance || ''}km` : '';
+                        const sub = item.distance ? `${item.distance}km` : (item.nationality || '');
                         div.innerHTML = `${label}${sub ? `<small>${sub}</small>` : ''}`;
                         div.onclick = () => {
                             input.value = label;
@@ -487,7 +587,7 @@
                                     ? `✅ VALUE BET — Stake ${(k.half_kelly * 100).toFixed(1)}% of bankroll (½ Kelly)`
                                     : `❌ NO VALUE — Model sees no edge at these odds`}
                             </div>
-                            ${k.should_bet ? `<button class="btn btn-primary" style="margin-top:0.8rem;width:100%;" onclick="logBet('${rider.name}', '${rider.url || ''}', ${rider.win_probability}, ${k.bookmaker_odds}, ${k.half_kelly})">📝 Log This Bet</button>` : ''}
+                            ${k.should_bet ? `<button class="btn btn-primary" style="margin-top:0.8rem;width:100%;" onclick="logBet(this)" data-name="${rider.name.replace(/"/g, '&quot;')}" data-url="${rider.url || ''}" data-prob="${rider.win_probability}" data-odds="${k.bookmaker_odds}" data-kelly="${k.half_kelly}">📝 Log This Bet</button>` : ''}
                         </div>
                     `;
                 });
@@ -503,7 +603,12 @@
         }
 
         let _lastPrediction = {};
-        async function logBet(selName, selUrl, modelProb, odds, kellyFrac) {
+        async function logBet(btn) {
+            const selName = btn.dataset.name;
+            const selUrl = btn.dataset.url;
+            const modelProb = parseFloat(btn.dataset.prob);
+            const odds = parseFloat(btn.dataset.odds);
+            const kellyFrac = parseFloat(btn.dataset.kelly);
             const bankroll = await fetch('/api/pnl/summary').then(r => r.json()).then(s => s.bankroll);
             if (!bankroll || bankroll <= 0) {
                 alert('Set your bankroll first on the P&L page');
@@ -537,11 +642,12 @@
             alert(`✅ Bet logged! Bankroll: £${data.bankroll.toFixed(2)}`);
         }
 
-        // Load stats
+        // Load stats + saved races
         fetch('/api/stats').then(r => r.json()).then(s => {
             document.getElementById('stats-bar').textContent =
                 `Database: ${s.races} races · ${s.stages} stages · ${s.results.toLocaleString()} results · ${s.riders} riders · Years: ${s.year_range}`;
         }).catch(() => {});
+        loadSavedRaces();
     </script>
 </body>
 </html>

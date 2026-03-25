@@ -28,6 +28,16 @@ app = Flask(__name__)
 _predictor = None
 
 
+@app.errorhandler(400)
+@app.errorhandler(404)
+@app.errorhandler(500)
+def handle_error(e):
+    """Return JSON for API errors instead of HTML."""
+    if request.path.startswith("/api/"):
+        return jsonify({"error": str(e)}), e.code if hasattr(e, 'code') else 500
+    return e
+
+
 def get_predictor():
     global _predictor
     if _predictor is None:
@@ -115,7 +125,9 @@ def api_races():
 @app.route("/api/predict", methods=["POST"])
 def api_predict():
     """Make a head-to-head prediction. Supports both DB stage_url and manual race params."""
-    data = request.json
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid or missing JSON body"}), 400
     rider_a_url = data.get("rider_a_url")
     rider_b_url = data.get("rider_b_url")
     stage_url = data.get("stage_url")
@@ -209,6 +221,56 @@ def api_stats():
     stats["year_range"] = f"{year_range['mn']}-{year_range['mx']}" if year_range["mn"] else "N/A"
     conn.close()
     return jsonify(stats)
+
+
+# ── Saved Races ────────────────────────────────────────────────────────────
+
+@app.route("/api/saved-races")
+def api_saved_races():
+    """List saved race configurations."""
+    conn = get_pnl_db()
+    rows = conn.execute("SELECT * FROM saved_races ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/saved-races", methods=["POST"])
+def api_save_race():
+    """Save a race configuration for re-use."""
+    data = request.get_json(silent=True)
+    if not data or not data.get("name"):
+        return jsonify({"error": "Race name is required"}), 400
+
+    conn = get_pnl_db()
+    cur = conn.execute("""
+        INSERT INTO saved_races (name, distance_km, vertical_meters, profile_icon,
+                                  stage_type, is_one_day_race, num_climbs, race_base_url, race_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        data["name"],
+        data.get("distance_km"),
+        data.get("vertical_meters"),
+        data.get("profile_icon", "p3"),
+        data.get("stage_type", "RR"),
+        1 if data.get("is_one_day_race") else 0,
+        data.get("num_climbs", 0),
+        data.get("race_base_url"),
+        data.get("race_date"),
+    ))
+    conn.commit()
+    race_id = cur.lastrowid
+    conn.close()
+    return jsonify({"id": race_id, "message": "Race saved"})
+
+
+@app.route("/api/saved-races/<int:race_id>", methods=["DELETE"])
+def api_delete_saved_race(race_id):
+    """Delete a saved race configuration."""
+    conn = get_pnl_db()
+    conn.execute("DELETE FROM saved_races WHERE id = ?", (race_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "Deleted"})
 
 
 # ── P&L Routes ──────────────────────────────────────────────────────────────
@@ -307,7 +369,8 @@ def api_auto_settle():
 # ── Results Browser Routes ──────────────────────────────────────────────────
 
 @app.route("/results")
-def results_page():
+@app.route("/results/<path:subpath>")
+def results_page(subpath=None):
     return render_template("results.html")
 
 
@@ -328,6 +391,10 @@ def api_results_races():
     if q:
         conditions.append("LOWER(r.name) LIKE ?")
         params.append(f"%{q}%")
+    # Only show races that have at least one result
+    conditions.append(
+        "EXISTS (SELECT 1 FROM results res JOIN stages s2 ON res.stage_url = s2.url WHERE s2.race_url = r.url)"
+    )
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -342,7 +409,11 @@ def api_results_races():
         LIMIT ? OFFSET ?
     """, params + [per_page, offset]).fetchall()
 
-    years = [r["year"] for r in conn.execute("SELECT DISTINCT year FROM races ORDER BY year DESC").fetchall()]
+    years = [r["year"] for r in conn.execute("""
+        SELECT DISTINCT r.year FROM races r
+        WHERE EXISTS (SELECT 1 FROM results res JOIN stages s ON res.stage_url = s.url WHERE s.race_url = r.url)
+        ORDER BY year DESC
+    """).fetchall()]
     conn.close()
 
     return jsonify({
@@ -370,6 +441,7 @@ def api_results_stages():
                (SELECT COUNT(*) FROM results r WHERE r.stage_url = s.url) as finishers
         FROM stages s
         WHERE s.race_url = ?
+          AND EXISTS (SELECT 1 FROM results r WHERE r.stage_url = s.url)
         ORDER BY s.date, s.url
     """, (race_url,)).fetchall()
 

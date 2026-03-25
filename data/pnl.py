@@ -51,6 +51,20 @@ def _create_pnl_tables(conn: sqlite3.Connection):
 
     CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
     CREATE INDEX IF NOT EXISTS idx_bets_date ON bets(race_date);
+
+    CREATE TABLE IF NOT EXISTS saved_races (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        distance_km REAL,
+        vertical_meters REAL,
+        profile_icon TEXT,
+        stage_type TEXT DEFAULT 'RR',
+        is_one_day_race INTEGER DEFAULT 0,
+        num_climbs INTEGER DEFAULT 0,
+        race_base_url TEXT,
+        race_date TEXT
+    );
     """)
     conn.commit()
 
@@ -182,7 +196,7 @@ def void_bet(bet_id: int, db_path: str = DB_PATH):
     )
     bankroll = get_current_bankroll(db_path) + bet["stake"]
     conn.execute(
-        "INSERT INTO bankroll_history (bankroll, event) VALUES (?, 'bet_settled')",
+        "INSERT INTO bankroll_history (bankroll, event) VALUES (?, 'bet_voided')",
         (bankroll,)
     )
     conn.commit()
@@ -280,10 +294,21 @@ def auto_settle_from_results(db_path: str = DB_PATH) -> int:
 
         if not result_a or not result_b:
             continue
-        if result_a["rank"] is None or result_b["rank"] is None:
+
+        rank_a = result_a["rank"]
+        rank_b = result_b["rank"]
+
+        # Both DNF — can't settle
+        if rank_a is None and rank_b is None:
             continue
 
-        a_ahead = result_a["rank"] < result_b["rank"]
+        # One DNF — finisher wins
+        if rank_a is None:
+            a_ahead = False
+        elif rank_b is None:
+            a_ahead = True
+        else:
+            a_ahead = rank_a < rank_b
         selection_won = (bet["selection"] == "A" and a_ahead) or \
                        (bet["selection"] == "B" and not a_ahead)
 

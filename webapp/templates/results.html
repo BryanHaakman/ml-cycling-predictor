@@ -123,8 +123,8 @@
             <h1>🚴 Cycling H2H <span>Results Browser</span></h1>
             <nav>
                 <a href="/">Predictions</a>
-                <a href="/pnl">P&L Tracker</a>
                 <a href="/results" class="active">Results</a>
+                <a href="/pnl">P&L Tracker</a>
             </nav>
         </header>
 
@@ -145,6 +145,48 @@
 <script>
 const state = { view: 'races', page: 1, year: null, query: '', sortCol: null, sortDir: 'asc' };
 const $ = id => document.getElementById(id);
+
+// ── URL helpers ──
+function pushUrl(path, replace = false) {
+    const method = replace ? 'replaceState' : 'pushState';
+    history[method](null, '', path);
+}
+
+function encodeUrl(pcsUrl) {
+    // race/tour-de-france/2024 → tour-de-france/2024
+    return pcsUrl.replace(/^race\//, '').replace(/^rider\//, '');
+}
+
+function parseRoute() {
+    const path = window.location.pathname;
+
+    // /results/rider/<rider-slug>
+    const riderMatch = path.match(/^\/results\/rider\/(.+)/);
+    if (riderMatch) return { view: 'rider', id: 'rider/' + riderMatch[1] };
+
+    // /results/race/<race-name>/<year>/stage/<stage-slug>
+    const stageMatch = path.match(/^\/results\/race\/([^/]+\/\d{4})\/stage\/(.+)/);
+    if (stageMatch) return { view: 'stage', raceId: 'race/' + stageMatch[1], stageId: 'race/' + stageMatch[1] + '/' + stageMatch[2] };
+
+    // /results/race/<race-name>/<year>
+    const raceMatch = path.match(/^\/results\/race\/(.+)/);
+    if (raceMatch) return { view: 'race', id: 'race/' + raceMatch[1] };
+
+    return { view: 'races' };
+}
+
+// Handle browser back/forward
+window.addEventListener('popstate', () => routeFromUrl());
+
+function routeFromUrl() {
+    const route = parseRoute();
+    switch (route.view) {
+        case 'rider': viewRider(route.id, true); break;
+        case 'stage': viewStage(route.stageId, route.raceId, true); break;
+        case 'race': viewRace(route.id, true); break;
+        default: loadRaces(true); break;
+    }
+}
 
 // ── Stats ──
 async function loadStats() {
@@ -250,9 +292,10 @@ function sortData(data, col, dir) {
 // ── Views ──
 
 // RACES LIST
-async function loadRaces() {
+async function loadRaces(skipPush = false) {
     state.view = 'races';
     state.sortCol = null;
+    if (!skipPush) pushUrl('/results');
     updateBreadcrumb([{ label: 'All Races' }]);
 
     const params = new URLSearchParams({ page: state.page, per_page: 50 });
@@ -299,10 +342,11 @@ function renderRaces() {
 }
 
 // RACE DETAIL (stages)
-async function viewRace(raceUrl) {
+async function viewRace(raceUrl, skipPush = false) {
     state.view = 'race';
     state.sortCol = null;
     $('search-dropdown').classList.remove('active');
+    if (!skipPush) pushUrl('/results/race/' + encodeUrl(raceUrl));
 
     const data = await fetch(`/api/results/stages?race_url=${encodeURIComponent(raceUrl)}`).then(r => r.json());
     const race = data.race;
@@ -341,17 +385,31 @@ function renderRaceDetail() {
 }
 
 // STAGE RESULTS
-async function viewStage(stageUrl, raceUrl) {
+async function viewStage(stageUrl, raceUrl, skipPush = false) {
     state.view = 'stage';
     state.sortCol = null;
     $('search-dropdown').classList.remove('active');
+    if (!skipPush) {
+        // stageUrl: race/tour-de-france/2024/stage-1 → /results/race/tour-de-france/2024/stage/stage-1
+        const parts = stageUrl.replace(/^race\//, '').split('/');
+        const racePart = parts.slice(0, -1).join('/');
+        const stagePart = parts[parts.length - 1];
+        pushUrl('/results/race/' + racePart + '/stage/' + stagePart);
+    }
 
     const data = await fetch(`/api/results/stage?stage_url=${encodeURIComponent(stageUrl)}`).then(r => r.json());
     const st = data.stage;
 
+    // If we don't have race info (e.g. deep-linked), fetch it
+    if (!state._currentRace && raceUrl) {
+        const raceData = await fetch(`/api/results/stages?race_url=${encodeURIComponent(raceUrl)}`).then(r => r.json());
+        state._currentRace = raceData.race;
+        state._currentRaceUrl = raceUrl;
+    }
+
     updateBreadcrumb([
         { label: 'All Races', action: 'loadRaces()' },
-        { label: state._currentRace?.name || '...', action: `viewRace('${raceUrl || ''}')` },
+        { label: state._currentRace?.name ? `${state._currentRace.name} (${state._currentRace.year || ''})` : raceUrl, action: `viewRace('${raceUrl || ''}')` },
         { label: st?.stage_name || stageUrl }
     ]);
 
@@ -407,11 +465,12 @@ function renderStageResults() {
 }
 
 // RIDER RESULTS
-async function viewRider(riderUrl) {
+async function viewRider(riderUrl, skipPush = false) {
     state.view = 'rider';
     state.sortCol = null;
     state.page = 1;
     $('search-dropdown').classList.remove('active');
+    if (!skipPush) pushUrl('/results/rider/' + encodeUrl(riderUrl));
 
     const data = await fetch(`/api/results/rider?rider_url=${encodeURIComponent(riderUrl)}&per_page=200`).then(r => r.json());
     const rider = data.rider;
@@ -487,7 +546,7 @@ function renderCurrentView() {
 
 // ── Init ──
 loadStats();
-loadRaces();
+routeFromUrl();
 </script>
 </body>
 </html>

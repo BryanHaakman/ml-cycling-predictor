@@ -17,8 +17,11 @@ The pipeline scrapes historical results from ProCyclingStats, engineers **270 fe
   - [3. Train Models](#3-train-models)
   - [4. Run Feature Experiments](#4-run-feature-experiments)
   - [5. Launch Web App](#5-launch-web-app)
+  - [6. Export Data](#6-export-data)
+  - [7. Run Tests](#7-run-tests)
 - [Web Application](#web-application)
   - [Prediction Page](#prediction-page-)
+  - [Results Browser](#results-browser-results)
   - [P&L Tracker](#pl-tracker-pnl)
 - [API Reference](#api-reference)
 - [Data Pipeline](#data-pipeline)
@@ -54,9 +57,13 @@ The pipeline scrapes historical results from ProCyclingStats, engineers **270 fe
 - **Dark-themed web UI** with rider/race autocomplete search
 - **Time-based train/test split** — trains on earlier years, tests on recent years (no data leakage)
 - **Feature ablation study** — systematic comparison of 20 feature group combinations
+- **Upcoming race predictions** — manual input mode for races not yet in the database (distance, profile, climbs, etc.)
+- **Results browser** (`/results`) — search and browse all scraped race results
+- **CSV export** — export all database tables to timestamped CSV files
+- **Resumable scraping** — interrupt and restart without re-scraping completed races
 - **Periodic update script** — fetch new races incrementally since last scrape
 - **SQLite caching** — all scraped data persisted locally, no re-scraping needed
-- **Rate-limited scraping** — ~1.2s between requests to avoid Cloudflare blocks
+- **Rate-limited scraping** — ~0.5s between requests with automatic retry and exponential backoff
 - **Model persistence** — trained models saved to disk and reloaded automatically
 
 ---
@@ -102,8 +109,8 @@ pip install -r requirements.txt
 ### Quick Start (full pipeline)
 
 ```bash
-# 1. Scrape data (takes several hours due to rate limiting)
-python scripts/scrape_all.py
+# 1. Scrape data (use caffeinate on macOS to prevent sleep)
+caffeinate -i python scripts/scrape_all.py
 
 # 2. Train models
 python scripts/train.py
@@ -120,15 +127,33 @@ python webapp/app.py
 ### 1. Scrape Race Data
 
 ```bash
+# Default: 35 major races, 2026 → 2018 (newest first)
 python scripts/scrape_all.py
+
+# All tiers: include Class 1 & 2 races (~250+ races/year)
+python scripts/scrape_all.py --all-tiers
+
+# Major races only (WorldTour + monuments)
+python scripts/scrape_all.py --major-only
+
+# Specific years
+python scripts/scrape_all.py --years 2024 2025
+
+# Force re-scrape (ignore resume log)
+python scripts/scrape_all.py --force
 ```
 
-- Scrapes **35 major races** × years **2018–2026**
-- Each race: overview → stages → results → rider profiles
+- Scrapes **35 major races** × years **2026–2018** (newest first by default)
+- `--all-tiers` includes Class 1 & 2 races (~250+ per year)
+- **Resumable** — interrupt with Ctrl+C and restart; completed races are skipped automatically
 - Data cached in `data/cache.db` (SQLite) — re-running skips already-scraped pages
-- Rate limited to **~1.2 seconds** between requests
-- Expect **several hours** for a full scrape due to rate limiting
+- Rate limited to **~0.5 seconds** between requests with automatic retry on server errors
+- **60-second timeout** per request to prevent hangs
 - Progress bars shown via `tqdm`
+- **Tip**: Use `caffeinate -i` on macOS to prevent sleep during long scrapes:
+  ```bash
+  caffeinate -i python scripts/scrape_all.py --all-tiers
+  ```
 
 ### 2. Incremental Updates
 
@@ -192,6 +217,33 @@ python webapp/app.py
 - Runs Flask in debug mode on `http://localhost:5000`
 - Requires trained models in `models/trained/`
 - Requires scraped data in `data/cache.db`
+- Pages: Predictions (`/`), Results Browser (`/results`), P&L Tracker (`/pnl`)
+
+### 6. Export Data
+
+```bash
+# Export all tables to timestamped CSV folder
+python scripts/export_data.py
+
+# Custom output directory
+python scripts/export_data.py -o ./my-exports
+
+# Export specific tables only
+python scripts/export_data.py --tables races stages results
+```
+
+- Exports all database tables (`races`, `stages`, `results`, `riders`, `scrape_log`) to CSV
+- Output saved to `data/exports/YYYYMMDD_HHMMSS/` by default
+- Useful for data backup, sharing, or external analysis
+
+### 7. Run Tests
+
+```bash
+pytest tests/ -v
+```
+
+- 11 tests covering the data export script
+- Tests verify CSV output, table filtering, row counts, and data integrity
 
 ---
 
@@ -199,11 +251,22 @@ python webapp/app.py
 
 ### Prediction Page (`/`)
 
+Two input modes:
+
+**From Database:**
 1. **Search Rider A** — autocomplete from database (min 2 chars, max 20 results)
 2. **Search Rider B** — same autocomplete
 3. **Search Race/Stage** — autocomplete by race name or stage name
 4. **Enter Bookmaker Odds** (optional) — decimal odds for each rider
 5. Click **Predict Head-to-Head**
+
+**Upcoming Race (Manual):**
+1. **Search Rider A & B** — same autocomplete
+2. **Enter race parameters**: distance (km), vertical metres, profile scores (p1–p5), stage type, one-day flag, number of climbs, race base URL, date
+3. **Enter Bookmaker Odds** (optional)
+4. Click **Predict Head-to-Head**
+- Profile score estimated from icon if not provided
+- Race base URL enables same-race history lookup (e.g., `race/tour-de-france`)
 
 Results display:
 - **Win probability** for each rider (percentage)
@@ -215,6 +278,12 @@ Results display:
   - Full Kelly, Half Kelly fractions
   - Value bet verdict (✅ or ❌)
 - **Log This Bet** button — appears on value bets, auto-calculates stake from ½ Kelly × bankroll
+
+### Results Browser (`/results`)
+
+- **Search** by race name, rider name, or year
+- **Browse** all scraped race results with finishing positions
+- **Navigation** links between Predictions, Results, and P&L pages
 
 ### P&L Tracker (`/pnl`)
 
@@ -234,9 +303,10 @@ Results display:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/` | Prediction page |
+| `GET` | `/results` | Results browser page |
 | `GET` | `/api/riders?q=pog` | Rider autocomplete (min 2 chars, max 20 results) |
 | `GET` | `/api/races?q=tour&year=2024` | Race/stage search |
-| `POST` | `/api/predict` | Make H2H prediction |
+| `POST` | `/api/predict` | Make H2H prediction (from DB or manual race params) |
 | `GET` | `/api/stats` | Database statistics |
 
 ### P&L Endpoints
@@ -254,12 +324,32 @@ Results display:
 
 ### Prediction Request/Response
 
-**Request** (`POST /api/predict`):
+**Request — From Database** (`POST /api/predict`):
 ```json
 {
   "rider_a_url": "rider/tadej-pogacar",
   "rider_b_url": "rider/jonas-vingegaard",
   "stage_url": "race/tour-de-france/2024/stage-14",
+  "odds_a": 1.65,
+  "odds_b": 2.40
+}
+```
+
+**Request — Upcoming Race (Manual)** (`POST /api/predict`):
+```json
+{
+  "rider_a_url": "rider/tadej-pogacar",
+  "rider_b_url": "rider/jonas-vingegaard",
+  "race_params": {
+    "distance_km": 151.5,
+    "vertical_meters": 4200,
+    "profile_icon": "p4",
+    "stage_type": "RR",
+    "is_one_day_race": false,
+    "num_climbs": 6,
+    "race_base_url": "race/tour-de-france",
+    "date": "2026-07-15"
+  },
   "odds_a": 1.65,
   "odds_b": 2.40
 }
@@ -486,12 +576,18 @@ Unique constraint: `(stage_url, rider_url)`
 
 ### Scraper Details
 
-- **Rate limiting**: Global limiter at **1.2 seconds** between requests (`REQUEST_DELAY = 1.2`)
+- **Rate limiting**: Global limiter at **0.5 seconds** between requests (`REQUEST_DELAY = 0.5`)
+- **Retry with backoff**: Automatic retry on HTTP 500/502/503/429 errors and Cloudflare blocks with exponential backoff
+- **Request timeout**: 60-second per-request timeout to prevent hangs (via `SIGALRM`)
+- **Resume support**: Completed races logged to `scrape_log` table; restarting skips finished races (`--force` to override)
+- **Year order**: Scrapes newest years first (2026 → 2018) by default
 - **Cloudflare bypass**: Uses `cloudscraper` package (auto-detected by `procyclingstats`)
 - **Error handling**: Individual stage/rider scrape failures are logged and skipped (no crash on partial failures)
+- **Stub riders**: When a rider profile page fails to parse, a stub record is inserted to avoid retrying
 - **One-day races**: Results use `/result` URL suffix (e.g., `race/paris-roubaix/2024/result`)
-- **Rider parsing issues**: Some rider profile pages fail with "list index out of range" — gracefully skipped
+- **Parse errors**: Handles `float('-')` and missing data gracefully on incomplete PCS pages
 - **Result filtering**: Only riders with a numeric finishing `rank` are included (DNF/DNS excluded)
+- **macOS tip**: Use `caffeinate -i` to prevent system sleep during long scrapes
 
 ---
 
@@ -843,26 +939,31 @@ cycling-predictor/
 ├── data/
 │   ├── __init__.py
 │   ├── scraper.py              # PCS scraper with SQLite cache + rate limiting
-│   │                           # - 35 major races, 1.2s rate limit
+│   │                           # - 35+ races, 0.5s rate limit, retry + timeout
+│   │                           # - Resume support, stub riders, parse error handling
 │   │                           # - Tables: races, stages, results, riders, scrape_log
 │   ├── builder.py              # H2H pair generation from race results
 │   │                           # - Top-50 finishers, 200 pairs/stage sampling
 │   ├── pnl.py                  # P&L tracker backend
 │   │                           # - Tables: bets, bankroll_history
 │   │                           # - Bet lifecycle: place → settle/void
-│   └── cache.db                # SQLite database (generated by scraper)
+│   ├── cache.db                # SQLite database (generated by scraper)
+│   └── exports/                # CSV exports (generated by export script)
 │
 ├── features/
 │   ├── __init__.py
 │   ├── race_features.py        # 19 race features (distance, elevation, climbs, profile)
 │   ├── rider_features.py       # 78 rider features per rider (form, specialty, terrain, career)
-│   └── pipeline.py             # Full 270-feature pipeline (race + diff + absolute + H2H + interactions)
+│   └── pipeline.py             # Full 270-feature pipeline + manual prediction support
+│                               # - build_feature_vector() for DB races
+│                               # - build_feature_vector_manual() for upcoming races
 │
 ├── models/
 │   ├── __init__.py
 │   ├── benchmark.py            # Train & compare 5 models, save artifacts
 │   ├── neural_net.py           # PyTorch 4-layer NN (256→128→64→32, BatchNorm, Dropout)
 │   ├── predict.py              # Predictor class + Kelly Criterion + odds converters
+│   │                           # - predict() for DB races, predict_manual() for upcoming
 │   └── trained/                # Saved model artifacts (generated by training)
 │       ├── scaler.pkl
 │       ├── feature_names.json
@@ -874,16 +975,23 @@ cycling-predictor/
 │       └── benchmark_results.csv
 │
 ├── scripts/
-│   ├── scrape_all.py           # Full scrape: 2018–2026
+│   ├── scrape_all.py           # Full scrape: 2026–2018 (newest first)
+│   │                           # - --all-tiers, --major-only, --years, --force
 │   ├── update_races.py         # Incremental update since last scrape
 │   ├── train.py                # Training orchestrator (pairs → features → benchmark)
-│   └── experiment.py           # Feature ablation study (20 experiments, --model, --splits)
+│   ├── experiment.py           # Feature ablation study (20 experiments, --model, --splits)
+│   └── export_data.py          # Export DB tables to CSV (-o, --tables)
+│
+├── tests/
+│   ├── __init__.py
+│   └── test_export.py          # 11 pytest tests for export script
 │
 ├── webapp/
 │   ├── __init__.py
-│   ├── app.py                  # Flask app (14 routes, port 5000, debug mode)
+│   ├── app.py                  # Flask app (15+ routes, port 5000, debug mode)
 │   └── templates/
-│       ├── index.html          # Prediction page (autocomplete, Kelly display, log bet)
+│       ├── index.html          # Prediction page (DB + manual mode, Kelly, log bet)
+│       ├── results.html        # Results browser (search, browse scraped results)
 │       └── pnl.html            # P&L dashboard (bankroll chart, bet history, auto-settle)
 │
 ├── notebooks/                  # Empty — for future Jupyter analysis
@@ -909,6 +1017,7 @@ cycling-predictor/
 | `tqdm` | ≥4.66.0 | Progress bars |
 | `joblib` | ≥1.3.0 | Model serialisation |
 | `matplotlib` | ≥3.8.0 | Plotting (experiment results) |
+| `pytest` | ≥7.0.0 | Testing framework |
 
 ---
 
@@ -939,10 +1048,13 @@ y_train.values.astype(np.float32)
 ```
 
 ### ProCyclingStats Scraping
-- Some rider pages fail with "list index out of range" (e.g., Vlasov, Girmay) — these are logged and skipped
+- Some rider pages fail with "list index out of range" — a stub record is inserted so they aren't retried
+- Some stages fail with `float('-')` on missing data — caught and skipped gracefully
 - One-day race results need `/result` suffix: `race/paris-roubaix/2024/result`
 - Cloudflare blocks plain `requests` — `cloudscraper` is mandatory
-- Rate limiting at 1.2s is sufficient to avoid blocks in practice
+- Rate limiting at 0.5s with retry wrapper is reliable in practice
+- Requests have a 60-second timeout to prevent indefinite hangs
+- On macOS, use `caffeinate -i` to prevent sleep from killing network connections
 
 ### H2H Pair Generation
 - Only pairs where both riders finished in **top 50** (`MAX_RANK_CUTOFF = 50`)
