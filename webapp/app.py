@@ -19,7 +19,6 @@ from data.pnl import (
     set_initial_bankroll, auto_settle_from_results,
 )
 from models.predict import Predictor, kelly_criterion, decimal_odds_to_implied_prob
-
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
@@ -209,6 +208,98 @@ def api_predict():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/predict/batch", methods=["POST"])
+def api_predict_batch():
+    """Batch head-to-head predictions. Accepts multiple pairs against a shared race config."""
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid or missing JSON body"}), 400
+
+    pairs = data.get("pairs", [])
+    stage_url = data.get("stage_url")
+    race_params = data.get("race_params")
+
+    if not pairs:
+        return jsonify({"error": "No pairs provided"}), 400
+    if not stage_url and not race_params:
+        return jsonify({"error": "Provide either stage_url or race_params"}), 400
+
+    predictor = get_predictor()
+    if predictor is None:
+        return jsonify({"error": "No trained model available. Run training first."}), 503
+
+    results = []
+    for i, pair in enumerate(pairs):
+        rider_a_url = pair.get("rider_a_url")
+        rider_b_url = pair.get("rider_b_url")
+        odds_a = pair.get("odds_a")
+        odds_b = pair.get("odds_b")
+
+        if not rider_a_url or not rider_b_url:
+            results.append({"error": f"Pair {i+1}: missing rider URLs", "index": i})
+            continue
+
+        try:
+            odds_a = float(odds_a) if odds_a else None
+            odds_b = float(odds_b) if odds_b else None
+
+            if race_params:
+                result = predictor.predict_manual(rider_a_url, rider_b_url, race_params, odds_a, odds_b)
+            else:
+                result = predictor.predict(rider_a_url, rider_b_url, stage_url, odds_a, odds_b)
+
+            entry = {
+                "index": i,
+                "rider_a": {
+                    "name": result.rider_a_name,
+                    "url": rider_a_url,
+                    "win_probability": round(result.prob_a_wins, 4),
+                    "win_pct": f"{result.prob_a_wins:.1%}",
+                },
+                "rider_b": {
+                    "name": result.rider_b_name,
+                    "url": rider_b_url,
+                    "win_probability": round(result.prob_b_wins, 4),
+                    "win_pct": f"{result.prob_b_wins:.1%}",
+                },
+                "model": result.model_used,
+            }
+
+            if result.kelly_a:
+                k = result.kelly_a
+                entry["rider_a"]["kelly"] = {
+                    "edge": round(k.edge, 4),
+                    "edge_pct": f"{k.edge:.1%}",
+                    "full_kelly": round(k.kelly_fraction, 4),
+                    "half_kelly": round(k.half_kelly, 4),
+                    "quarter_kelly": round(k.quarter_kelly, 4),
+                    "expected_value": round(k.expected_value, 4),
+                    "should_bet": k.should_bet,
+                    "bookmaker_odds": odds_a,
+                    "implied_prob": round(decimal_odds_to_implied_prob(odds_a), 4),
+                }
+            if result.kelly_b:
+                k = result.kelly_b
+                entry["rider_b"]["kelly"] = {
+                    "edge": round(k.edge, 4),
+                    "edge_pct": f"{k.edge:.1%}",
+                    "full_kelly": round(k.kelly_fraction, 4),
+                    "half_kelly": round(k.half_kelly, 4),
+                    "quarter_kelly": round(k.quarter_kelly, 4),
+                    "expected_value": round(k.expected_value, 4),
+                    "should_bet": k.should_bet,
+                    "bookmaker_odds": odds_b,
+                    "implied_prob": round(decimal_odds_to_implied_prob(odds_b), 4),
+                }
+
+            results.append(entry)
+        except Exception as e:
+            log.warning("Batch prediction error for pair %d: %s", i, e)
+            results.append({"error": str(e), "index": i})
+
+    return jsonify({"results": results, "count": len(results)})
+
+
 @app.route("/api/stats")
 def api_stats():
     """Database stats."""
@@ -364,6 +455,7 @@ def api_void_bet():
 def api_auto_settle():
     count = auto_settle_from_results()
     return jsonify({"settled": count, "bankroll": get_current_bankroll()})
+
 
 
 # ── Results Browser Routes ──────────────────────────────────────────────────

@@ -2,21 +2,23 @@
 """
 Full training pipeline: build pairs → compute features → train models.
 Run after scraping data.
+
+Usage:
+  python -u scripts/train.py          # Skip NN (fast, ~25 min)
+  python -u scripts/train.py --nn     # Include Neural Network (slow)
 """
 
 import os
 import sys
 import logging
 import time
+import argparse
 
-# Prevent thread deadlock between sklearn and PyTorch
+# Prevent thread deadlock between sklearn and PyTorch on macOS
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import torch
-torch.set_num_threads(1)
 
 import pandas as pd
 
@@ -36,6 +38,11 @@ def _elapsed(start):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Train cycling H2H predictor")
+    parser.add_argument("--nn", action="store_true",
+                        help="Include Neural Network in benchmark (slow, off by default)")
+    args = parser.parse_args()
+
     t0 = time.time()
 
     log.info("=== Step 1: Building H2H pairs ===")
@@ -73,7 +80,7 @@ def main():
 
     log.info("\n=== Step 3: Training and benchmarking models ===")
     t3 = time.time()
-    results = run_benchmark(feature_df, dates)
+    results = run_benchmark(feature_df, dates, skip_nn=not args.nn)
 
     log.info(f"Training complete ({_elapsed(t3)})")
     log.info(f"\n✅ Done! Total time: {_elapsed(t0)}")

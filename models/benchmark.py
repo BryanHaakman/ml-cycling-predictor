@@ -22,7 +22,8 @@ from sklearn.metrics import (
 from sklearn.calibration import CalibratedClassifierCV
 import xgboost as xgb
 
-from models.neural_net import CyclingNet, train_neural_net, predict_neural_net
+# Lazy import: neural_net imports torch which conflicts with XGBoost's OpenMP on macOS
+# Import inside functions that need it instead
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ def run_benchmark(
     feature_df: pd.DataFrame,
     date_series: pd.Series,
     test_years: list[int] = None,
+    skip_nn: bool = False,
 ) -> dict:
     """
     Train all models and return comparison results.
@@ -83,6 +85,8 @@ def run_benchmark(
     )
 
     log.info(f"Train size: {len(X_train)}, Test size: {len(X_test)}")
+
+    feature_names = list(X_train.columns)
 
     # Standardize features
     scaler = StandardScaler()
@@ -128,15 +132,19 @@ def run_benchmark(
     models["XGBoost"] = xgb_model
 
     # --- Neural Network ---
-    log.info("Training Neural Network...")
-    nn_model, nn_history = train_neural_net(
-        X_train_scaled, y_train.values.astype(np.float32),
-        X_test_scaled, y_test.values.astype(np.float32),
-    )
-    nn_prob = predict_neural_net(nn_model, X_test_scaled)
-    nn_pred = (nn_prob >= 0.5).astype(int)
-    results.append(evaluate_model("NeuralNetwork", y_test, nn_pred, nn_prob))
-    models["NeuralNetwork"] = nn_model
+    if not skip_nn:
+        log.info("Training Neural Network...")
+        from models.neural_net import train_neural_net, predict_neural_net
+        nn_model, nn_history = train_neural_net(
+            X_train_scaled, y_train.values.astype(np.float32),
+            X_test_scaled, y_test.values.astype(np.float32),
+        )
+        nn_prob = predict_neural_net(nn_model, X_test_scaled)
+        nn_pred = (nn_prob >= 0.5).astype(int)
+        results.append(evaluate_model("NeuralNetwork", y_test, nn_pred, nn_prob))
+        models["NeuralNetwork"] = nn_model
+    else:
+        log.info("Skipping Neural Network (--nn to include)")
 
     # --- Calibrated XGBoost (for betting) ---
     log.info("Training Calibrated XGBoost...")

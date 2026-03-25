@@ -168,9 +168,79 @@
         }
         .mode-btn.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
         .mode-btn:hover:not(.active) { border-color: var(--muted); }
+
+        /* Batch mode */
+        .top-mode-toggle {
+            display: flex; gap: 0.5rem; justify-content: center; margin-bottom: 1.5rem;
+        }
+        .top-mode-btn {
+            padding: 0.55rem 1.4rem; border-radius: 8px; cursor: pointer;
+            border: 1px solid var(--border); background: transparent;
+            color: var(--muted); font-size: 0.9rem; font-weight: 500; transition: all 0.2s;
+        }
+        .top-mode-btn.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+        .top-mode-btn:hover:not(.active) { border-color: var(--muted); color: var(--text); }
+
+        .batch-pair-row {
+            display: grid; grid-template-columns: 1fr 1fr 100px 100px auto;
+            gap: 0.5rem; align-items: end; margin-bottom: 0.5rem;
+        }
+        .batch-pair-row .form-group { gap: 0.2rem; }
+        .batch-pair-row label { font-size: 0.7rem; }
+        .batch-pair-row input { padding: 0.55rem 0.7rem; font-size: 0.85rem; }
+        .batch-pair-row .remove-pair-btn {
+            background: transparent; border: 1px solid var(--border); color: var(--red);
+            border-radius: 6px; cursor: pointer; padding: 0.55rem 0.6rem; font-size: 0.9rem;
+            transition: all 0.2s; align-self: end;
+        }
+        .batch-pair-row .remove-pair-btn:hover { background: rgba(255,82,82,0.15); border-color: var(--red); }
+        .batch-actions { display: flex; gap: 0.5rem; margin: 1rem 0 1.5rem; flex-wrap: wrap; }
+        .batch-actions .btn { width: auto; flex: 1; min-width: 140px; }
+        .btn-secondary {
+            background: var(--card); color: var(--text); border: 1px solid var(--border);
+            padding: 0.7rem 1rem; border-radius: 8px; font-size: 0.9rem; font-weight: 500;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .btn-secondary:hover { border-color: var(--accent); }
+        .btn-success { background: var(--green); color: #000; }
+        .btn-success:hover { opacity: 0.85; }
+        .btn-success:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* Batch results table */
+        .batch-results-table {
+            width: 100%; border-collapse: collapse; font-size: 0.85rem;
+            margin-bottom: 1.5rem;
+        }
+        .batch-results-table th {
+            background: var(--card); color: var(--muted); text-transform: uppercase;
+            font-size: 0.7rem; letter-spacing: 0.5px; padding: 0.7rem 0.5rem;
+            border-bottom: 1px solid var(--border); text-align: left;
+        }
+        .batch-results-table td {
+            padding: 0.65rem 0.5rem; border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        .batch-results-table tr:hover { background: rgba(255,255,255,0.02); }
+        .batch-results-table .value-yes { color: var(--green); font-weight: 600; }
+        .batch-results-table .value-no { color: var(--muted); }
+        .batch-results-table .winner-cell { color: var(--green); font-weight: 600; }
+        .batch-results-table .edge-positive { color: var(--green); }
+        .batch-results-table .edge-negative { color: var(--red); }
+        .batch-summary {
+            background: var(--card); border-radius: 10px; padding: 1rem 1.5rem;
+            border: 1px solid var(--border); margin-bottom: 1rem;
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem;
+            text-align: center;
+        }
+        .batch-summary .stat-value { font-size: 1.3rem; font-weight: 700; display: block; }
+        .batch-summary .stat-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; }
+
         @media (max-width: 600px) {
             .form-grid, .odds-section, .matchup { grid-template-columns: 1fr; }
             .vs { padding: 0.5rem 0; }
+            .batch-pair-row { grid-template-columns: 1fr 1fr; }
+            .batch-pair-row .form-group:nth-child(3),
+            .batch-pair-row .form-group:nth-child(4) { }
         }
     </style>
 </head>
@@ -181,6 +251,13 @@
             <p>ML-powered head-to-head predictions with Kelly Criterion staking</p>
             <nav style="margin-top:0.5rem;"><a href="/" style="color:var(--accent);text-decoration:none;margin-right:1rem;">Predictions</a><a href="/results" style="color:var(--muted);text-decoration:none;margin-right:1rem;">Results</a><a href="/pnl" style="color:var(--muted);text-decoration:none;">P&L Tracker</a></nav>
         </header>
+
+        <div class="top-mode-toggle">
+            <button class="top-mode-btn active" id="tmb-single" onclick="setTopMode('single')">Single H2H</button>
+            <button class="top-mode-btn" id="tmb-batch" onclick="setTopMode('batch')">Batch H2H</button>
+        </div>
+
+        <div id="single-mode">
 
         <div class="form-grid">
             <div class="form-group">
@@ -306,6 +383,121 @@
         </div>
 
         <div class="stats-bar" id="stats-bar">Loading stats...</div>
+    </div><!-- end single-mode -->
+
+    <!-- ── Batch Mode ────────────────────────────────────────────── -->
+    <div id="batch-mode" style="display:none;">
+        <div class="form-group full" style="margin-bottom:1.5rem;">
+            <label>Race Setup</label>
+            <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;align-items:center;flex-wrap:wrap;">
+                <select id="batch-saved-race-select" style="flex:1;min-width:200px;padding:0.5rem 0.8rem;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;">
+                    <option value="">— Select Saved Race or Enter Below —</option>
+                </select>
+            </div>
+            <div id="batch-race-fields" style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;">
+                <div class="form-group">
+                    <label>Race Name</label>
+                    <input type="text" id="batch-race-name" placeholder="e.g. E3 Saxo Classic 2026">
+                </div>
+                <div class="form-group">
+                    <label>Race Date</label>
+                    <input type="date" id="batch-race-date">
+                </div>
+                <div class="form-group">
+                    <label>Distance (km)</label>
+                    <input type="number" id="batch-distance" placeholder="e.g. 200" step="0.1" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Vertical Metres</label>
+                    <input type="number" id="batch-vert" placeholder="e.g. 3500" step="1" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Profile Type</label>
+                    <select id="batch-profile">
+                        <option value="p1">p1 — Flat</option>
+                        <option value="p2">p2 — Hilly (flat finish)</option>
+                        <option value="p3" selected>p3 — Hilly (uphill finish)</option>
+                        <option value="p4">p4 — Mountain</option>
+                        <option value="p5">p5 — Mountain (summit finish)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Stage Type</label>
+                    <select id="batch-stage-type">
+                        <option value="RR" selected>Road Race</option>
+                        <option value="ITT">Individual Time Trial</option>
+                        <option value="TTT">Team Time Trial</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>One-Day Race?</label>
+                    <select id="batch-oneday">
+                        <option value="0">No (stage race)</option>
+                        <option value="1">Yes (one-day race)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Number of Climbs</label>
+                    <input type="number" id="batch-climbs" placeholder="e.g. 5" step="1" min="0">
+                </div>
+                <div class="form-group full">
+                    <label>Race Base URL (optional)</label>
+                    <input type="text" id="batch-race-url" placeholder="e.g. race/e3-harelbeke">
+                </div>
+            </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+            <label style="font-size:0.85rem;font-weight:600;">H2H Pairs</label>
+            <span id="batch-pair-count" style="color:var(--muted);font-size:0.8rem;">0 pairs</span>
+        </div>
+
+        <div id="batch-pair-header" class="batch-pair-row" style="margin-bottom:0.3rem;">
+            <div><label>Rider A</label></div>
+            <div><label>Rider B</label></div>
+            <div><label>Odds A</label></div>
+            <div><label>Odds B</label></div>
+            <div></div>
+        </div>
+        <div id="batch-pairs-container"></div>
+
+        <div class="batch-actions">
+            <button class="btn-secondary" onclick="addBatchPair()">+ Add Pair</button>
+            <button class="btn-secondary" onclick="addMultipleBatchPairs()">+ Add 5 Pairs</button>
+            <button class="btn-secondary" onclick="clearBatchPairs()">🗑️ Clear All</button>
+        </div>
+
+        <button class="btn" id="batch-predict-btn" onclick="batchPredict()">⚡ Predict All H2H</button>
+
+        <div id="batch-error" class="error-msg" style="display:none;"></div>
+
+        <div id="batch-results" style="display:none;">
+            <div class="results-header">Batch Prediction Results</div>
+            <div class="batch-summary" id="batch-summary"></div>
+            <div style="overflow-x:auto;">
+                <table class="batch-results-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Rider A</th>
+                            <th>Rider B</th>
+                            <th>Prob A</th>
+                            <th>Prob B</th>
+                            <th>Predicted Winner</th>
+                            <th>Odds</th>
+                            <th>Edge</th>
+                            <th>½ Kelly</th>
+                            <th>Value?</th>
+                        </tr>
+                    </thead>
+                    <tbody id="batch-results-body"></tbody>
+                </table>
+            </div>
+            <button class="btn btn-success" id="log-all-bets-btn" onclick="logAllValueBets()" style="display:none;">📝 Log All Value Bets</button>
+        </div>
+
+        <div class="stats-bar" id="stats-bar-batch">Loading stats...</div>
+    </div><!-- end batch-mode -->
     </div>
 
     <script>
@@ -644,10 +836,373 @@
 
         // Load stats + saved races
         fetch('/api/stats').then(r => r.json()).then(s => {
-            document.getElementById('stats-bar').textContent =
-                `Database: ${s.races} races · ${s.stages} stages · ${s.results.toLocaleString()} results · ${s.riders} riders · Years: ${s.year_range}`;
+            const statsText = `Database: ${s.races} races · ${s.stages} stages · ${s.results.toLocaleString()} results · ${s.riders} riders · Years: ${s.year_range}`;
+            document.getElementById('stats-bar').textContent = statsText;
+            document.getElementById('stats-bar-batch').textContent = statsText;
         }).catch(() => {});
         loadSavedRaces();
+
+        // ── Top Mode Toggle (Single vs Batch) ──
+        function setTopMode(mode) {
+            document.getElementById('tmb-single').classList.toggle('active', mode === 'single');
+            document.getElementById('tmb-batch').classList.toggle('active', mode === 'batch');
+            document.getElementById('single-mode').style.display = mode === 'single' ? '' : 'none';
+            document.getElementById('batch-mode').style.display = mode === 'batch' ? '' : 'none';
+            if (mode === 'batch') loadBatchSavedRaces();
+        }
+
+        // ── Batch Mode Logic ──
+        let batchPairCounter = 0;
+        let _batchResults = [];
+
+        function loadBatchSavedRaces() {
+            const sel = document.getElementById('batch-saved-race-select');
+            sel.innerHTML = '<option value="">— Select Saved Race or Enter Below —</option>';
+            _savedRaces.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r.id;
+                const profile = r.profile_icon ? ` (${r.profile_icon})` : '';
+                const dist = r.distance_km ? ` ${r.distance_km}km` : '';
+                opt.textContent = `${r.name}${dist}${profile}`;
+                sel.appendChild(opt);
+            });
+        }
+
+        document.getElementById('batch-saved-race-select').addEventListener('change', function() {
+            const id = parseInt(this.value);
+            if (!id) return;
+            const race = _savedRaces.find(r => r.id === id);
+            if (!race) return;
+            document.getElementById('batch-race-name').value = race.name || '';
+            document.getElementById('batch-distance').value = race.distance_km || '';
+            document.getElementById('batch-vert').value = race.vertical_meters || '';
+            document.getElementById('batch-profile').value = race.profile_icon || 'p3';
+            document.getElementById('batch-stage-type').value = race.stage_type || 'RR';
+            document.getElementById('batch-oneday').value = race.is_one_day_race ? '1' : '0';
+            document.getElementById('batch-climbs').value = race.num_climbs || '';
+            document.getElementById('batch-race-url').value = race.race_base_url || '';
+            document.getElementById('batch-race-date').value = race.race_date || new Date().toISOString().split('T')[0];
+        });
+
+        document.getElementById('batch-race-date').value = new Date().toISOString().split('T')[0];
+
+        function addBatchPair() {
+            const container = document.getElementById('batch-pairs-container');
+            const idx = batchPairCounter++;
+            const row = document.createElement('div');
+            row.className = 'batch-pair-row';
+            row.id = `batch-pair-${idx}`;
+            row.innerHTML = `
+                <div class="form-group">
+                    <div class="autocomplete-wrap">
+                        <input type="text" id="bp-a-input-${idx}" placeholder="Search rider A..." autocomplete="off">
+                        <div class="autocomplete-list" id="bp-a-list-${idx}"></div>
+                        <input type="hidden" id="bp-a-url-${idx}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="autocomplete-wrap">
+                        <input type="text" id="bp-b-input-${idx}" placeholder="Search rider B..." autocomplete="off">
+                        <div class="autocomplete-list" id="bp-b-list-${idx}"></div>
+                        <input type="hidden" id="bp-b-url-${idx}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <input type="number" id="bp-odds-a-${idx}" placeholder="e.g. 1.73" step="0.01" min="1.01">
+                </div>
+                <div class="form-group">
+                    <input type="number" id="bp-odds-b-${idx}" placeholder="e.g. 2.00" step="0.01" min="1.01">
+                </div>
+                <button class="remove-pair-btn" onclick="removeBatchPair(${idx})" title="Remove pair">✕</button>
+            `;
+            container.appendChild(row);
+            setupAutocomplete(`bp-a-input-${idx}`, `bp-a-list-${idx}`, `bp-a-url-${idx}`, '/api/riders');
+            setupAutocomplete(`bp-b-input-${idx}`, `bp-b-list-${idx}`, `bp-b-url-${idx}`, '/api/riders');
+            updateBatchPairCount();
+        }
+
+        function addMultipleBatchPairs() {
+            for (let i = 0; i < 5; i++) addBatchPair();
+        }
+
+        function removeBatchPair(idx) {
+            const row = document.getElementById(`batch-pair-${idx}`);
+            if (row) row.remove();
+            updateBatchPairCount();
+        }
+
+        function clearBatchPairs() {
+            document.getElementById('batch-pairs-container').innerHTML = '';
+            batchPairCounter = 0;
+            updateBatchPairCount();
+        }
+
+        function updateBatchPairCount() {
+            const count = document.querySelectorAll('#batch-pairs-container .batch-pair-row').length;
+            document.getElementById('batch-pair-count').textContent = `${count} pair${count !== 1 ? 's' : ''}`;
+        }
+
+        function getBatchPairs() {
+            const rows = document.querySelectorAll('#batch-pairs-container .batch-pair-row');
+            const pairs = [];
+            rows.forEach(row => {
+                const idx = row.id.replace('batch-pair-', '');
+                const aUrl = document.getElementById(`bp-a-url-${idx}`).value;
+                const bUrl = document.getElementById(`bp-b-url-${idx}`).value;
+                const aName = document.getElementById(`bp-a-input-${idx}`).value;
+                const bName = document.getElementById(`bp-b-input-${idx}`).value;
+                const oddsA = document.getElementById(`bp-odds-a-${idx}`).value;
+                const oddsB = document.getElementById(`bp-odds-b-${idx}`).value;
+                if (aUrl && bUrl) {
+                    pairs.push({
+                        rider_a_url: aUrl, rider_b_url: bUrl,
+                        rider_a_name: aName, rider_b_name: bName,
+                        odds_a: oddsA ? parseFloat(oddsA) : null,
+                        odds_b: oddsB ? parseFloat(oddsB) : null,
+                    });
+                }
+            });
+            return pairs;
+        }
+
+        function getBatchRaceParams() {
+            const distance = parseFloat(document.getElementById('batch-distance').value);
+            if (!distance || distance <= 0) return null;
+            return {
+                distance: distance,
+                vertical_meters: parseFloat(document.getElementById('batch-vert').value) || 0,
+                profile_icon: document.getElementById('batch-profile').value,
+                stage_type: document.getElementById('batch-stage-type').value,
+                is_one_day_race: document.getElementById('batch-oneday').value === '1',
+                race_date: document.getElementById('batch-race-date').value || new Date().toISOString().split('T')[0],
+                race_base_url: document.getElementById('batch-race-url').value || null,
+                num_climbs: parseInt(document.getElementById('batch-climbs').value) || 0,
+            };
+        }
+
+        async function batchPredict() {
+            const btn = document.getElementById('batch-predict-btn');
+            const err = document.getElementById('batch-error');
+            const resultsDiv = document.getElementById('batch-results');
+            err.style.display = 'none';
+            resultsDiv.style.display = 'none';
+
+            const pairs = getBatchPairs();
+            if (pairs.length === 0) {
+                err.textContent = 'Add at least one H2H pair with both riders selected.';
+                err.style.display = 'block';
+                return;
+            }
+
+            const raceParams = getBatchRaceParams();
+            if (!raceParams) {
+                err.textContent = 'Enter a valid race distance.';
+                err.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = `⏳ Predicting ${pairs.length} matchups...`;
+
+            try {
+                const res = await fetch('/api/predict/batch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ pairs, race_params: raceParams }),
+                });
+                const data = await res.json();
+                if (data.error) {
+                    err.textContent = data.error;
+                    err.style.display = 'block';
+                    return;
+                }
+
+                _batchResults = data.results;
+                renderBatchResults(data.results, pairs);
+                resultsDiv.style.display = 'block';
+                resultsDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch(e) {
+                err.textContent = 'Batch prediction failed: ' + e.message;
+                err.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⚡ Predict All H2H';
+            }
+        }
+
+        function renderBatchResults(results, pairs) {
+            const tbody = document.getElementById('batch-results-body');
+            const summary = document.getElementById('batch-summary');
+            const logBtn = document.getElementById('log-all-bets-btn');
+            tbody.innerHTML = '';
+
+            let valueBets = 0;
+            let totalEdge = 0;
+            let successCount = 0;
+
+            results.forEach((r, i) => {
+                if (r.error) {
+                    tbody.innerHTML += `<tr><td>${i+1}</td><td colspan="9" style="color:var(--red);">Error: ${r.error}</td></tr>`;
+                    return;
+                }
+                successCount++;
+
+                const probA = r.rider_a.win_probability;
+                const probB = r.rider_b.win_probability;
+                const winner = probA >= probB ? r.rider_a : r.rider_b;
+                const loser = probA >= probB ? r.rider_b : r.rider_a;
+
+                // Find the value bet side
+                const kellyA = r.rider_a.kelly;
+                const kellyB = r.rider_b.kelly;
+                let valueSide = null;
+                let edge = '—';
+                let edgeClass = '';
+                let halfKelly = '—';
+                let oddsStr = '—';
+
+                if (kellyA && kellyA.should_bet) {
+                    valueSide = 'A';
+                    edge = kellyA.edge_pct;
+                    edgeClass = 'edge-positive';
+                    halfKelly = (kellyA.half_kelly * 100).toFixed(1) + '%';
+                    oddsStr = kellyA.bookmaker_odds.toFixed(2);
+                    totalEdge += kellyA.edge;
+                    valueBets++;
+                } else if (kellyB && kellyB.should_bet) {
+                    valueSide = 'B';
+                    edge = kellyB.edge_pct;
+                    edgeClass = 'edge-positive';
+                    halfKelly = (kellyB.half_kelly * 100).toFixed(1) + '%';
+                    oddsStr = kellyB.bookmaker_odds.toFixed(2);
+                    totalEdge += kellyB.edge;
+                    valueBets++;
+                } else {
+                    // Show best edge even if negative
+                    if (kellyA) {
+                        edge = kellyA.edge_pct;
+                        edgeClass = kellyA.edge > 0 ? 'edge-positive' : 'edge-negative';
+                        oddsStr = kellyA.bookmaker_odds.toFixed(2);
+                    }
+                    if (kellyB && (!kellyA || kellyB.edge > kellyA.edge)) {
+                        edge = kellyB.edge_pct;
+                        edgeClass = kellyB.edge > 0 ? 'edge-positive' : 'edge-negative';
+                        oddsStr = kellyB.bookmaker_odds.toFixed(2);
+                    }
+                }
+
+                const valueLabel = valueSide
+                    ? `<span class="value-yes">✅ ${valueSide === 'A' ? r.rider_a.name : r.rider_b.name}</span>`
+                    : `<span class="value-no">❌</span>`;
+
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${i + 1}</td>
+                        <td>${r.rider_a.name}</td>
+                        <td>${r.rider_b.name}</td>
+                        <td>${r.rider_a.win_pct}</td>
+                        <td>${r.rider_b.win_pct}</td>
+                        <td class="winner-cell">${winner.name}</td>
+                        <td>${oddsStr}</td>
+                        <td class="${edgeClass}">${edge}</td>
+                        <td>${halfKelly}</td>
+                        <td>${valueLabel}</td>
+                    </tr>
+                `;
+            });
+
+            summary.innerHTML = `
+                <div><span class="stat-value">${successCount}</span><span class="stat-label">Matchups</span></div>
+                <div><span class="stat-value" style="color:var(--green)">${valueBets}</span><span class="stat-label">Value Bets</span></div>
+                <div><span class="stat-value">${successCount - valueBets}</span><span class="stat-label">No Edge</span></div>
+                <div><span class="stat-value" style="color:var(--green)">${valueBets > 0 ? (totalEdge / valueBets * 100).toFixed(1) + '%' : '—'}</span><span class="stat-label">Avg Edge</span></div>
+            `;
+
+            logBtn.style.display = valueBets > 0 ? '' : 'none';
+            logBtn.textContent = `📝 Log All ${valueBets} Value Bet${valueBets !== 1 ? 's' : ''}`;
+        }
+
+        async function logAllValueBets() {
+            const btn = document.getElementById('log-all-bets-btn');
+            const raceName = document.getElementById('batch-race-name').value || 'Unknown Race';
+            const raceDate = document.getElementById('batch-race-date').value || new Date().toISOString().split('T')[0];
+
+            const summaryData = await fetch('/api/pnl/summary').then(r => r.json());
+            let bankroll = summaryData.bankroll;
+            if (!bankroll || bankroll <= 0) {
+                alert('Set your bankroll first on the P&L page');
+                return;
+            }
+
+            // Collect value bets
+            const betsToPlace = [];
+            _batchResults.forEach(r => {
+                if (r.error) return;
+                const kellyA = r.rider_a.kelly;
+                const kellyB = r.rider_b.kelly;
+                if (kellyA && kellyA.should_bet) {
+                    betsToPlace.push({
+                        rider_a: r.rider_a, rider_b: r.rider_b,
+                        selection: r.rider_a, kelly: kellyA, model: r.model,
+                    });
+                } else if (kellyB && kellyB.should_bet) {
+                    betsToPlace.push({
+                        rider_a: r.rider_a, rider_b: r.rider_b,
+                        selection: r.rider_b, kelly: kellyB, model: r.model,
+                    });
+                }
+            });
+
+            if (betsToPlace.length === 0) return;
+
+            const totalStake = betsToPlace.reduce((sum, b) => sum + b.kelly.half_kelly * bankroll, 0);
+            if (!confirm(`Log ${betsToPlace.length} value bets?\n\nTotal stake: £${totalStake.toFixed(2)} (½ Kelly each)\nCurrent bankroll: £${bankroll.toFixed(2)}`)) return;
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Logging bets...';
+            let logged = 0;
+
+            for (const bet of betsToPlace) {
+                const stake = (bet.kelly.half_kelly * bankroll).toFixed(2);
+                if (parseFloat(stake) < 0.01) continue;
+
+                const res = await fetch('/api/pnl/bet', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        stage_url: `manual/${raceName.replace(/\s+/g, '-').toLowerCase()}/${bet.selection.url}`,
+                        race_name: raceName,
+                        race_date: raceDate,
+                        rider_a_url: bet.rider_a.url,
+                        rider_a_name: bet.rider_a.name,
+                        rider_b_url: bet.rider_b.url,
+                        rider_b_name: bet.rider_b.name,
+                        selection: bet.selection.url,
+                        selection_name: bet.selection.name,
+                        decimal_odds: bet.kelly.bookmaker_odds,
+                        model_prob: bet.selection.win_probability,
+                        kelly_fraction: bet.kelly.half_kelly,
+                        stake: parseFloat(stake),
+                        model_used: bet.model || 'CalibratedXGBoost',
+                        notes: `Batch H2H: edge ${bet.kelly.edge_pct}`,
+                    }),
+                });
+                const data = await res.json();
+                if (!data.error) {
+                    bankroll = data.bankroll;
+                    logged++;
+                }
+            }
+
+            btn.disabled = false;
+            btn.textContent = `✅ ${logged} bet${logged !== 1 ? 's' : ''} logged! Bankroll: £${bankroll.toFixed(2)}`;
+            setTimeout(() => {
+                btn.textContent = `📝 Log All ${betsToPlace.length} Value Bet${betsToPlace.length !== 1 ? 's' : ''}`;
+            }, 4000);
+        }
+
+        // Add initial pair rows
+        addBatchPair();
     </script>
 </body>
 </html>
