@@ -5,7 +5,8 @@
 __pycache__/
 *.py[cod]
 
-# Database WAL/SHM temp files
+# Database (exported to data/exports/latest/ instead)
+data/cache.db
 data/cache.db-shm
 data/cache.db-wal
 
@@ -20,6 +21,9 @@ models/trained/*.pt
 .DS_Store
 .vscode/
 .idea/
+
+# Logs
+*.log
 
 # Data exports (timestamped backups)
 data/exports/*/
