@@ -317,3 +317,34 @@ New interaction features:
 5. Top features by permutation importance: `race_profile_score` (0.0247), `interact_diff_tt_x_itt` (0.0066), `diff_spec_gc_pct` (0.0057), `interact_diff_sprint_x_flat` (0.0055), `diff_age` (0.0032)
 
 **Conclusion:** Feature selection does not reliably improve accuracy. XGBoost's built-in regularization (`colsample_bytree=0.8`, `min_child_weight=10`) already effectively ignores noisy features. The `--select-features N` flag was added to `train.py` for future experiments but is not used in production. The accuracy ceiling (~68.5-69% / 0.753-0.756 AUC) is confirmed as data/feature-limited, not model or feature-count-limited.
+
+---
+
+## 2026-03-26 — Weather Features via Open-Meteo Historical API
+
+**Hypothesis:** Historical weather data (temperature, rain, wind, humidity) for race locations could improve H2H predictions. Weather conditions affect rider performance differently based on weight, experience, and riding style — e.g., rain favors skilled descenders, wind hurts lighter riders, heat tests endurance.
+
+**Method:**
+1. Geocoded 962/983 departure cities using Nominatim (OpenStreetMap)
+2. Fetched historical weather from Open-Meteo archive API for 380/1422 stages (27% coverage — rate limited)
+3. Added 10 race-level weather features: temp_max, temp_min, rain_mm, wind_kmh, humidity, is_rainy, is_hot, is_cold, is_windy, temp_range
+4. Added 9 weather×rider interaction features: rain×weight, wind×weight, heat×experience
+5. Total features: 284 → 303
+6. Trained CalibratedXGBoost with weather features
+
+**Results:**
+
+| Config | Accuracy | ROC-AUC | Brier |
+|--------|----------|---------|-------|
+| Without weather (baseline) | 0.6857 | 0.7548 | 0.2011 |
+| With weather (27% coverage) | 0.6850 | 0.7537 | 0.2014 |
+
+No weather feature appeared in the top 20 by XGBoost importance.
+
+**Why weather doesn't help for H2H:**
+1. Weather conditions affect **all riders in the same race equally** — the key question is differential impact, which is very small
+2. Only 27% coverage means 73% of stages have weather=0.0, diluting any signal
+3. The interactions we designed (rain×weight, wind×weight, heat×experience) have weak theoretical basis — real-world weather effects are complex and not well-captured by simple products
+4. ProCyclingStats already provides `avg_temperature` for 49% of stages, which the model already uses
+
+**Decision:** Weather features reverted from training pipeline. The `scripts/fetch_weather.py` script and DB tables (`geocoded_cities`, `stage_weather`) are kept for future use. Weather data is a fundamentally weak signal for H2H prediction because it's a race-level variable, not a rider-level variable.
