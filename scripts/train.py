@@ -41,6 +41,8 @@ def main():
     parser = argparse.ArgumentParser(description="Train cycling H2H predictor")
     parser.add_argument("--nn", action="store_true",
                         help="Include Neural Network in benchmark (slow, off by default)")
+    parser.add_argument("--select-features", type=int, default=0, metavar="N",
+                        help="Select top N features by permutation importance (0 = use all)")
     args = parser.parse_args()
 
     t0 = time.time()
@@ -80,7 +82,8 @@ def main():
 
     log.info("\n=== Step 3: Training and benchmarking models ===")
     t3 = time.time()
-    results = run_benchmark(feature_df, dates, skip_nn=not args.nn)
+    results = run_benchmark(feature_df, dates, skip_nn=not args.nn,
+                            select_features=args.select_features)
 
     log.info(f"Training complete ({_elapsed(t3)})")
     log.info(f"\n✅ Done! Total time: {_elapsed(t0)}")

@@ -267,3 +267,53 @@ New interaction features:
 6. **The NN accuracy ceiling is ~68.2% / 0.752 AUC** — this matches CalibratedXGBoost's uncalibrated performance. The limitation is features, not model architecture.
 
 **Decision:** No changes kept. The standard 256→128→64→32 NN with default training is already at peak performance for this feature set. CalibratedXGBoost (68.7% / 0.757 AUC) remains the production model. Future accuracy gains require new data sources or fundamentally different features, not model improvements.
+
+---
+
+## 2026-03-26 — Feature Selection via Permutation Importance
+
+**Hypothesis:** Pruning low-importance features (284 → top N) may remove noise and improve accuracy. XGBoost's regularization might not fully compensate for having 62 features with negative permutation importance.
+
+**Method:**
+1. Trained XGBoost on all 283 features, computed permutation importance (10 repeats, ROC-AUC scoring)
+2. Tested top-N subsets (20, 30, 50, 80, 100, 120, 150, 200) with both raw XGBoost and CalibratedXGBoost
+3. Two ranking methods: XGBoost gain importance and permutation importance
+4. Fine-grained search around the sweet spot (80-160 in steps of 5-10)
+5. Full production training run with `--select-features 120` to validate
+
+**Results (Phase 1 — broad search, single run):**
+
+| Method | Model | top_N | Accuracy | ROC-AUC | Δ AUC vs all |
+|--------|-------|-------|----------|---------|-------------|
+| all features | CalXGBoost | 283 | 0.6826 | 0.7536 | baseline |
+| perm | CalXGBoost | 80 | 0.6838 | 0.7544 | +0.0008 |
+| perm | CalXGBoost | 120 | 0.6843 | 0.7550 | +0.0014 |
+| perm | CalXGBoost | 130 | — | 0.7558 | +0.0022 |
+| gain | CalXGBoost | 150 | 0.6845 | 0.7539 | +0.0003 |
+
+**Results (Phase 2 — fine-grained CalXGB, fresh pair sample):**
+
+| top_N | Accuracy | ROC-AUC |
+|-------|----------|---------|
+| 80 | 0.6859 | 0.7543 |
+| 90 | 0.6867 | 0.7554 |
+| 120 | **0.6878** | **0.7557** |
+| 130 | 0.6871 | **0.7558** |
+| 150 | 0.6870 | 0.7553 |
+
+**Results (Phase 3 — production training validation):**
+
+| Config | Accuracy | ROC-AUC |
+|--------|----------|---------|
+| With feat selection (top 120) | 0.6831 | 0.7533 |
+| Without feat selection (all 283) — same run | 0.6867 | 0.7559 |
+| Previous committed baseline (all 283) | 0.6841 | 0.7541 |
+
+**Key findings:**
+1. 62 features have negative permutation importance, but removing them gives only +0.0005 AUC
+2. Perm-importance top 120-130 appeared best in isolated experiments (+0.001-0.002 AUC)
+3. **Run-to-run variance from random pair sampling is ±0.003 AUC** — larger than any feature selection effect
+4. Full production training with selection gave **worse** results than without (0.7533 vs 0.7559)
+5. Top features by permutation importance: `race_profile_score` (0.0247), `interact_diff_tt_x_itt` (0.0066), `diff_spec_gc_pct` (0.0057), `interact_diff_sprint_x_flat` (0.0055), `diff_age` (0.0032)
+
+**Conclusion:** Feature selection does not reliably improve accuracy. XGBoost's built-in regularization (`colsample_bytree=0.8`, `min_child_weight=10`) already effectively ignores noisy features. The `--select-features N` flag was added to `train.py` for future experiments but is not used in production. The accuracy ceiling (~68.5-69% / 0.753-0.756 AUC) is confirmed as data/feature-limited, not model or feature-count-limited.
