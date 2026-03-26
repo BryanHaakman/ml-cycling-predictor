@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin — Cycling H2H Predictor</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --card: #1a1d27;
+            --border: #2a2d3a;
+            --accent: #f5c518;
+            --green: #00c853;
+            --red: #ff5252;
+            --blue: #448aff;
+            --text: #e8e8e8;
+            --muted: #8a8d9b;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 2rem 1rem; }
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        header h1 { font-size: 1.8rem; margin-bottom: 0.25rem; }
+        header h1 span { color: var(--accent); }
+        header p { color: var(--muted); font-size: 0.9rem; }
+        nav { margin-top: 0.5rem; }
+        nav a {
+            color: var(--muted);
+            text-decoration: none;
+            margin-right: 1rem;
+            transition: color 0.2s;
+        }
+        nav a:hover { color: var(--text); }
+        nav a.active { color: var(--accent); }
+
+        .scripts-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .script-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem 1.5rem;
+            transition: border-color 0.2s;
+        }
+        .script-card.running { border-color: var(--blue); }
+        .script-card.done { border-color: var(--green); }
+        .script-card.error { border-color: var(--red); }
+
+        .script-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        .script-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        .script-desc {
+            color: var(--muted);
+            font-size: 0.85rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .script-actions {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 0.5rem 1.2rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .btn-run {
+            background: var(--green);
+            color: #000;
+        }
+        .btn-run:hover:not(:disabled) { filter: brightness(1.1); }
+        .btn-stop {
+            background: var(--red);
+            color: #fff;
+        }
+        .btn-stop:hover:not(:disabled) { filter: brightness(1.1); }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-idle { background: var(--border); color: var(--muted); }
+        .status-running { background: rgba(68,138,255,0.2); color: var(--blue); }
+        .status-done { background: rgba(0,200,83,0.15); color: var(--green); }
+        .status-error { background: rgba(255,82,82,0.15); color: var(--red); }
+        .status-stopped { background: rgba(255,82,82,0.15); color: var(--red); }
+
+        /* Progress bar */
+        .progress-bar-wrap {
+            width: 100%;
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            margin-bottom: 0.75rem;
+            overflow: hidden;
+            display: none;
+        }
+        .progress-bar-wrap.active { display: block; }
+        .progress-bar {
+            height: 100%;
+            background: var(--blue);
+            border-radius: 2px;
+            transition: width 0.3s;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        .progress-bar.done { background: var(--green); animation: none; }
+        .progress-bar.error { background: var(--red); animation: none; }
+
+        /* Log output */
+        .log-output {
+            background: #12141a;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 0.78rem;
+            line-height: 1.5;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: var(--muted);
+        }
+        .log-output.active { display: block; }
+        .log-output .log-line { margin: 0; }
+        .log-output .log-line.error { color: var(--red); }
+        .log-output .log-line.success { color: var(--green); }
+        .log-output .log-line.info { color: var(--blue); }
+
+        .elapsed {
+            color: var(--muted);
+            font-size: 0.8rem;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .db-stats {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem 1.5rem;
+        }
+        .db-stats h3 {
+            font-size: 1rem;
+            margin-bottom: 0.75rem;
+            color: var(--accent);
+        }
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.75rem;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text);
+        }
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚴 <span>Admin</span></h1>
+            <p>Run scripts, update data, and retrain models</p>
+            <nav>
+                <a href="/">Predictions</a>
+                <a href="/results">Results</a>
+                <a href="/pnl">P&L Tracker</a>
+                <a href="/admin" class="active">Admin</a>
+            </nav>
+        </header>
+
+        <div id="db-stats" class="db-stats" style="margin-bottom:1.5rem;">
+            <h3>📊 Database</h3>
+            <div class="stats-row">
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-races">—</div>
+                    <div class="stat-label">Races</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-stages">—</div>
+                    <div class="stat-label">Stages</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-results">—</div>
+                    <div class="stat-label">Results</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-riders">—</div>
+                    <div class="stat-label">Riders</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-model">—</div>
+                    <div class="stat-label">Best Model AUC</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="scripts-grid" id="scripts-grid"></div>
+    </div>
+
+    <script>
+        const scriptsGrid = document.getElementById('scripts-grid');
+        const eventSources = {};
+        const timers = {};
+
+        async function loadStats() {
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                document.getElementById('stat-races').textContent = (data.races || 0).toLocaleString();
+                document.getElementById('stat-stages').textContent = (data.stages || 0).toLocaleString();
+                document.getElementById('stat-results').textContent = (data.results || 0).toLocaleString();
+                document.getElementById('stat-riders').textContent = (data.riders || 0).toLocaleString();
+                if (data.best_auc) {
+                    document.getElementById('stat-model').textContent = data.best_auc.toFixed(4);
+                }
+            } catch (e) { console.error('Failed to load stats:', e); }
+        }
+
+        async function loadScripts() {
+            const res = await fetch('/api/admin/scripts');
+            const scripts = await res.json();
+
+            scriptsGrid.innerHTML = '';
+            scripts.forEach(s => {
+                const card = document.createElement('div');
+                card.className = `script-card ${s.status !== 'idle' ? s.status : ''}`;
+                card.id = `card-${s.id}`;
+                card.innerHTML = `
+                    <div class="script-header">
+                        <span class="script-title">${s.label}</span>
+                        <div style="display:flex;align-items:center;gap:0.75rem;">
+                            <span class="elapsed" id="elapsed-${s.id}"></span>
+                            <span class="status-badge status-${s.status}" id="badge-${s.id}">${s.status}</span>
+                        </div>
+                    </div>
+                    <div class="script-desc">${s.description}</div>
+                    <div class="progress-bar-wrap ${s.status === 'running' ? 'active' : ''}" id="progress-wrap-${s.id}">
+                        <div class="progress-bar ${s.status === 'done' ? 'done' : s.status === 'error' ? 'error' : ''}"
+                             id="progress-${s.id}" style="width:${s.status === 'running' ? '100%' : s.status === 'done' ? '100%' : '0%'}"></div>
+                    </div>
+                    <div class="script-actions">
+                        <button class="btn btn-run" id="run-${s.id}"
+                                onclick="runScript('${s.id}')"
+                                ${s.status === 'running' ? 'disabled' : ''}>
+                            ${s.status === 'running' ? '⏳ Running…' : '▶ Run'}
+                        </button>
+                        <button class="btn btn-stop" id="stop-${s.id}"
+                                onclick="stopScript('${s.id}')"
+                                ${s.status !== 'running' ? 'disabled' : ''}>
+                            ■ Stop
+                        </button>
+                    </div>
+                    <div class="log-output ${s.status === 'running' ? 'active' : ''}" id="log-${s.id}"></div>
+                `;
+                scriptsGrid.appendChild(card);
+
+                if (s.status === 'running') {
+                    connectStream(s.id);
+                    startTimer(s.id, s.start_time);
+                }
+            });
+        }
+
+        function startTimer(scriptId, startTime) {
+            if (timers[scriptId]) clearInterval(timers[scriptId]);
+            const start = startTime ? startTime * 1000 : Date.now();
+            const el = document.getElementById(`elapsed-${scriptId}`);
+            function update() {
+                const secs = Math.floor((Date.now() - start) / 1000);
+                const m = Math.floor(secs / 60);
+                const s = secs % 60;
+                el.textContent = `${m}m ${s.toString().padStart(2, '0')}s`;
+            }
+            update();
+            timers[scriptId] = setInterval(update, 1000);
+        }
+
+        function stopTimer(scriptId) {
+            if (timers[scriptId]) {
+                clearInterval(timers[scriptId]);
+                timers[scriptId] = null;
+            }
+        }
+
+        async function runScript(scriptId) {
+            const runBtn = document.getElementById(`run-${scriptId}`);
+            const stopBtn = document.getElementById(`stop-${scriptId}`);
+            const logEl = document.getElementById(`log-${scriptId}`);
+            const card = document.getElementById(`card-${scriptId}`);
+            const badge = document.getElementById(`badge-${scriptId}`);
+            const progressWrap = document.getElementById(`progress-wrap-${scriptId}`);
+            const progressBar = document.getElementById(`progress-${scriptId}`);
+
+            runBtn.disabled = true;
+            runBtn.textContent = '⏳ Running…';
+            stopBtn.disabled = false;
+            logEl.innerHTML = '';
+            logEl.classList.add('active');
+            card.className = 'script-card running';
+            badge.className = 'status-badge status-running';
+            badge.textContent = 'running';
+            progressWrap.classList.add('active');
+            progressBar.style.width = '100%';
+            progressBar.className = 'progress-bar';
+
+            try {
+                const res = await fetch(`/api/admin/run/${scriptId}`, { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) {
+                    logEl.innerHTML = `<div class="log-line error">${data.error}</div>`;
+                    resetCard(scriptId, 'error');
+                    return;
+                }
+                startTimer(scriptId, Date.now() / 1000);
+                connectStream(scriptId);
+            } catch (e) {
+                logEl.innerHTML = `<div class="log-line error">Failed to start: ${e.message}</div>`;
+                resetCard(scriptId, 'error');
+            }
+        }
+
+        function connectStream(scriptId) {
+            if (eventSources[scriptId]) eventSources[scriptId].close();
+
+            const logEl = document.getElementById(`log-${scriptId}`);
+            logEl.classList.add('active');
+
+            const es = new EventSource(`/api/admin/stream/${scriptId}`);
+            eventSources[scriptId] = es;
+
+            es.onmessage = (e) => {
+                const line = document.createElement('div');
+                line.className = 'log-line';
+                const text = e.data;
+                if (text.includes('ERROR') || text.includes('Error') || text.includes('Traceback')) {
+                    line.classList.add('error');
+                } else if (text.includes('✅') || text.includes('Done') || text.includes('complete')) {
+                    line.classList.add('success');
+                } else if (text.includes('INFO') || text.includes('===')) {
+                    line.classList.add('info');
+                }
+                line.textContent = text;
+                logEl.appendChild(line);
+                logEl.scrollTop = logEl.scrollHeight;
+            };
+
+            es.addEventListener('done', (e) => {
+                const code = parseInt(e.data);
+                const status = code === 0 ? 'done' : 'error';
+                resetCard(scriptId, status);
+                es.close();
+                delete eventSources[scriptId];
+                if (status === 'done') loadStats();
+            });
+
+            es.onerror = () => {
+                es.close();
+                delete eventSources[scriptId];
+            };
+        }
+
+        function resetCard(scriptId, status) {
+            const runBtn = document.getElementById(`run-${scriptId}`);
+            const stopBtn = document.getElementById(`stop-${scriptId}`);
+            const card = document.getElementById(`card-${scriptId}`);
+            const badge = document.getElementById(`badge-${scriptId}`);
+            const progressBar = document.getElementById(`progress-${scriptId}`);
+
+            runBtn.disabled = false;
+            runBtn.textContent = '▶ Run';
+            stopBtn.disabled = true;
+            card.className = `script-card ${status}`;
+            badge.className = `status-badge status-${status}`;
+            badge.textContent = status;
+            progressBar.className = `progress-bar ${status}`;
+            stopTimer(scriptId);
+        }
+
+        async function stopScript(scriptId) {
+            try {
+                await fetch(`/api/admin/stop/${scriptId}`, { method: 'POST' });
+                resetCard(scriptId, 'stopped');
+                if (eventSources[scriptId]) {
+                    eventSources[scriptId].close();
+                    delete eventSources[scriptId];
+                }
+                const logEl = document.getElementById(`log-${scriptId}`);
+                const line = document.createElement('div');
+                line.className = 'log-line error';
+                line.textContent = '⚠ Script stopped by user';
+                logEl.appendChild(line);
+            } catch (e) {
+                console.error('Failed to stop:', e);
+            }
+        }
+
+        loadStats();
+        loadScripts();
+    </script>
+</body>
+</html>

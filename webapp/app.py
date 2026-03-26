@@ -6,8 +6,12 @@ import os
 import sys
 import json
 import logging
+import subprocess
+import threading
+import time
+import queue
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -311,6 +315,17 @@ def api_stats():
     year_range = conn.execute("SELECT MIN(year) as mn, MAX(year) as mx FROM races").fetchone()
     stats["year_range"] = f"{year_range['mn']}-{year_range['mx']}" if year_range["mn"] else "N/A"
     conn.close()
+    # Load best model AUC from benchmark results
+    bench_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                              "models", "trained", "benchmark_results.csv")
+    try:
+        import csv
+        with open(bench_path) as f:
+            reader = csv.DictReader(f)
+            best_auc = max(float(row["roc_auc"]) for row in reader)
+            stats["best_auc"] = best_auc
+    except Exception:
+        stats["best_auc"] = None
     return jsonify(stats)
 
 
@@ -654,6 +669,168 @@ def api_results_search():
         "races": [dict(r) for r in races],
         "riders": [dict(r) for r in riders],
     })
+
+
+# ─── Admin: Script Runner ─────────────────────────────────────────────
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_VENV_PYTHON = os.path.join(_REPO_ROOT, ".venv", "bin", "python")
+
+# Track running processes: script_name → {process, output_queue, start_time, status}
+_running_scripts = {}
+_script_lock = threading.Lock()
+
+SCRIPTS = {
+    "update_data": {
+        "label": "Update Data",
+        "description": "Fetch new race results since last scrape",
+        "cmd": [_VENV_PYTHON, "-u", os.path.join(_REPO_ROOT, "scripts", "update_races.py")],
+    },
+    "precompute": {
+        "label": "Precompute Features",
+        "description": "Rebuild feature caches (rider + race parquet files)",
+        "cmd": [_VENV_PYTHON, "-u", os.path.join(_REPO_ROOT, "scripts", "precompute_features.py")],
+    },
+    "train": {
+        "label": "Train Models",
+        "description": "Full training pipeline (WT-only, ~15 min)",
+        "cmd": ["caffeinate", "-s", _VENV_PYTHON, "-u",
+                os.path.join(_REPO_ROOT, "scripts", "train.py"), "--wt-only"],
+    },
+}
+
+
+def _stream_output(proc, q, script_name):
+    """Read process stdout/stderr line by line into a queue."""
+    try:
+        for line in iter(proc.stdout.readline, ""):
+            if line:
+                q.put(line.rstrip("\n"))
+        proc.wait()
+    finally:
+        exit_code = proc.returncode
+        status = "done" if exit_code == 0 else "error"
+        q.put(f"__EXIT__{exit_code}")
+        with _script_lock:
+            if script_name in _running_scripts:
+                _running_scripts[script_name]["status"] = status
+                _running_scripts[script_name]["exit_code"] = exit_code
+
+
+@app.route("/admin")
+def admin():
+    return render_template("admin.html")
+
+
+@app.route("/api/admin/scripts")
+def admin_scripts():
+    """List available scripts and their current status."""
+    result = []
+    with _script_lock:
+        for key, info in SCRIPTS.items():
+            state = _running_scripts.get(key, {})
+            result.append({
+                "id": key,
+                "label": info["label"],
+                "description": info["description"],
+                "status": state.get("status", "idle"),
+                "start_time": state.get("start_time"),
+                "exit_code": state.get("exit_code"),
+            })
+    return jsonify(result)
+
+
+@app.route("/api/admin/run/<script_id>", methods=["POST"])
+def admin_run_script(script_id):
+    """Start a script. Returns error if already running."""
+    if script_id not in SCRIPTS:
+        return jsonify({"error": f"Unknown script: {script_id}"}), 404
+
+    with _script_lock:
+        existing = _running_scripts.get(script_id, {})
+        if existing.get("status") == "running":
+            return jsonify({"error": "Script is already running"}), 409
+
+    script = SCRIPTS[script_id]
+    q = queue.Queue()
+
+    proc = subprocess.Popen(
+        script["cmd"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        cwd=_REPO_ROOT,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+
+    with _script_lock:
+        _running_scripts[script_id] = {
+            "process": proc,
+            "queue": q,
+            "start_time": time.time(),
+            "status": "running",
+            "exit_code": None,
+        }
+
+    t = threading.Thread(target=_stream_output, args=(proc, q, script_id), daemon=True)
+    t.start()
+
+    return jsonify({"status": "started", "pid": proc.pid})
+
+
+@app.route("/api/admin/stream/<script_id>")
+def admin_stream(script_id):
+    """SSE endpoint — streams script output line by line."""
+    def generate():
+        with _script_lock:
+            state = _running_scripts.get(script_id)
+        if not state:
+            yield f"data: Script not running\n\n"
+            return
+
+        q = state["queue"]
+        while True:
+            try:
+                line = q.get(timeout=1.0)
+                if line.startswith("__EXIT__"):
+                    code = line.replace("__EXIT__", "")
+                    yield f"event: done\ndata: {code}\n\n"
+                    return
+                yield f"data: {line}\n\n"
+            except queue.Empty:
+                # Check if process is still alive
+                with _script_lock:
+                    s = _running_scripts.get(script_id, {})
+                if s.get("status") != "running":
+                    yield f"event: done\ndata: {s.get('exit_code', -1)}\n\n"
+                    return
+                yield f": keepalive\n\n"
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/admin/stop/<script_id>", methods=["POST"])
+def admin_stop_script(script_id):
+    """Stop a running script."""
+    with _script_lock:
+        state = _running_scripts.get(script_id)
+        if not state or state["status"] != "running":
+            return jsonify({"error": "Script not running"}), 404
+        proc = state["process"]
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+    with _script_lock:
+        if script_id in _running_scripts:
+            _running_scripts[script_id]["status"] = "stopped"
+
+    return jsonify({"status": "stopped"})
 
 
 if __name__ == "__main__":
