@@ -56,6 +56,18 @@ H2H_FEATURE_NAMES = [
 ]
 
 
+STARTLIST_FEATURE_NAMES = [
+    "field_rank_quality",     # percentile by career_top10_rate (1.0 = best in field)
+    "field_rank_form",        # percentile by form_90d_avg_pcs (1.0 = best form)
+    "field_strength_ratio",   # rider career_top10_rate / field average
+]
+
+STARTLIST_RACE_FEATURE_NAMES = [
+    "field_size",             # number of riders in the race
+    "field_avg_quality",      # avg career_top10_rate of field
+]
+
+
 def build_feature_vector(
     conn: sqlite3.Connection,
     rider_a_url: str,
@@ -109,6 +121,38 @@ def build_feature_vector(
     h2h = compute_h2h_history(conn, rider_a_url, rider_b_url, race_date)
     for k, v in h2h.items():
         features[k] = v
+
+    # 5b. Startlist-relative features (compute from all riders in this stage)
+    all_riders = conn.execute(
+        "SELECT rider_url FROM results WHERE stage_url = ?", (stage_url,)
+    ).fetchall()
+    field_qualities = {}
+    field_forms = {}
+    for r in all_riders:
+        rurl = r["rider_url"]
+        rf = compute_rider_features(conn, rurl, race_date, stage_url)
+        field_qualities[rurl] = float(rf.get("career_top10_rate", 0) or 0)
+        field_forms[rurl] = float(rf.get("form_90d_avg_pcs", 0) or 0)
+
+    field_size = len(all_riders)
+    avg_quality = np.mean(list(field_qualities.values())) if field_qualities else 0.0
+    features["race_field_size"] = float(field_size)
+    features["race_field_avg_quality"] = avg_quality
+
+    # Compute percentiles for rider A and B
+    q_sorted = sorted(field_qualities.values())
+    f_sorted = sorted(field_forms.values())
+    for prefix, rurl in [("a", rider_a_url), ("b", rider_b_url)]:
+        rq = field_qualities.get(rurl, 0)
+        rf_val = field_forms.get(rurl, 0)
+        pct_q = sum(1 for v in q_sorted if v <= rq) / max(len(q_sorted), 1)
+        pct_f = sum(1 for v in f_sorted if v <= rf_val) / max(len(f_sorted), 1)
+        strength_ratio = rq / avg_quality if avg_quality > 0 else 1.0
+        features[f"{prefix}_field_rank_quality"] = pct_q
+        features[f"{prefix}_field_rank_form"] = pct_f
+        features[f"{prefix}_field_strength_ratio"] = strength_ratio
+    for name in STARTLIST_FEATURE_NAMES:
+        features[f"diff_{name}"] = features[f"a_{name}"] - features[f"b_{name}"]
 
     # 6. Specialty-race interaction features
     profile = race_feats.get("profile_icon_num", 1)
@@ -309,6 +353,9 @@ def get_all_feature_names() -> list[str]:
     # Race features
     for n in RACE_FEATURE_NAMES:
         names.append(f"race_{n}")
+    # Startlist race-level features
+    for n in STARTLIST_RACE_FEATURE_NAMES:
+        names.append(f"race_{n}")
     # Diff rider features
     for n in RIDER_FEATURE_NAMES:
         names.append(f"diff_{n}")
@@ -319,6 +366,13 @@ def get_all_feature_names() -> list[str]:
         names.append(f"b_{n}")
     # H2H features
     names.extend(H2H_FEATURE_NAMES)
+    # Startlist-relative rider features (diff + absolute)
+    for n in STARTLIST_FEATURE_NAMES:
+        names.append(f"diff_{n}")
+    for n in STARTLIST_FEATURE_NAMES:
+        names.append(f"a_{n}")
+    for n in STARTLIST_FEATURE_NAMES:
+        names.append(f"b_{n}")
     # Interaction features
     names.extend([
         "interact_a_climber_x_profile", "interact_b_climber_x_profile",
@@ -389,6 +443,65 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
     for row in conn.execute("SELECT url, date FROM stages WHERE date IS NOT NULL").fetchall():
         stage_dates[row["url"]] = row["date"]
 
+    # --- Pre-compute startlist-relative features per stage ---
+    # Get all riders per stage (approximate startlist from results table)
+    stage_riders = {}
+    for row in conn.execute("SELECT stage_url, rider_url FROM results").fetchall():
+        stage_riders.setdefault(row["stage_url"], []).append(row["rider_url"])
+
+    # Compute field stats and rider percentiles for stages in our pairs
+    startlist_rider_feats = {}  # (rider_url, stage_url) → {field_rank_quality, ...}
+    startlist_race_feats = {}   # stage_url → {field_size, field_avg_quality}
+    target_stages = set(pairs_df["stage_url"].unique())
+
+    for surl in tqdm(target_stages, desc="Computing startlist features"):
+        riders_in_stage = stage_riders.get(surl, [])
+        if len(riders_in_stage) < 2:
+            continue
+
+        # Collect career_top10_rate and form_90d_avg_pcs for all riders in field
+        quality_vals = {}  # rider_url → career_top10_rate
+        form_vals = {}     # rider_url → form_90d_avg_pcs
+
+        for rurl in riders_in_stage:
+            rkey = (rurl, surl)
+            if rider_lookup and rkey in rider_lookup:
+                rf = rider_lookup[rkey]
+                quality_vals[rurl] = float(rf.get("career_top10_rate", 0) or 0)
+                form_vals[rurl] = float(rf.get("form_90d_avg_pcs", 0) or 0)
+
+        if not quality_vals:
+            continue
+
+        field_size = len(riders_in_stage)
+        q_values = list(quality_vals.values())
+        avg_quality = np.mean(q_values) if q_values else 0.0
+
+        startlist_race_feats[surl] = {
+            "field_size": field_size,
+            "field_avg_quality": avg_quality,
+        }
+
+        # Sort to compute percentiles (higher = better)
+        q_sorted = sorted(quality_vals.items(), key=lambda x: x[1])
+        f_sorted = sorted(form_vals.items(), key=lambda x: x[1])
+        n_q = len(q_sorted)
+        n_f = len(f_sorted)
+
+        for rank_idx, (rurl, _) in enumerate(q_sorted):
+            pct_q = rank_idx / max(n_q - 1, 1)  # 0 = worst, 1 = best
+            rider_quality = quality_vals.get(rurl, 0)
+            strength_ratio = rider_quality / avg_quality if avg_quality > 0 else 1.0
+            startlist_rider_feats.setdefault((rurl, surl), {})["field_rank_quality"] = pct_q
+            startlist_rider_feats[(rurl, surl)]["field_strength_ratio"] = strength_ratio
+
+        for rank_idx, (rurl, _) in enumerate(f_sorted):
+            pct_f = rank_idx / max(n_f - 1, 1)
+            startlist_rider_feats.setdefault((rurl, surl), {})["field_rank_form"] = pct_f
+
+    log.info(f"Computed startlist features for {len(startlist_race_feats)} stages, "
+             f"{len(startlist_rider_feats)} rider-stage entries")
+
     rows = []
     skipped = 0
     cache_hits = 0
@@ -440,6 +553,11 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
         for k in RACE_FEATURE_NAMES:
             features[f"race_{k}"] = float(race_feats.get(k, 0.0) or 0.0)
 
+        # Startlist race-level features
+        sl_race = startlist_race_feats.get(stage_url, {})
+        for k in STARTLIST_RACE_FEATURE_NAMES:
+            features[f"race_{k}"] = float(sl_race.get(k, 0.0) or 0.0)
+
         # Diff + absolute rider features
         for name in RIDER_FEATURE_NAMES:
             val_a = float(rider_a_feats.get(name, 0.0) or 0.0)
@@ -452,6 +570,16 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
         h2h = compute_h2h_history(conn, rider_a_url, rider_b_url, race_date)
         for k, v in h2h.items():
             features[k] = v
+
+        # Startlist-relative rider features (diff + absolute)
+        sl_a = startlist_rider_feats.get((rider_a_url, stage_url), {})
+        sl_b = startlist_rider_feats.get((rider_b_url, stage_url), {})
+        for name in STARTLIST_FEATURE_NAMES:
+            val_a = float(sl_a.get(name, 0.5) or 0.5)
+            val_b = float(sl_b.get(name, 0.5) or 0.5)
+            features[f"diff_{name}"] = val_a - val_b
+            features[f"a_{name}"] = val_a
+            features[f"b_{name}"] = val_b
 
         # Interaction features
         profile = race_feats.get("profile_icon_num", 1) or 1

@@ -43,19 +43,24 @@ def main():
                         help="Include Neural Network in benchmark (slow, off by default)")
     parser.add_argument("--select-features", type=int, default=0, metavar="N",
                         help="Select top N features by permutation importance (0 = use all)")
+    parser.add_argument("--wt-only", action="store_true",
+                        help="Train only on World Tour races (uci_tour 1.UWT/2.UWT)")
     args = parser.parse_args()
 
     t0 = time.time()
 
     log.info("=== Step 1: Building H2H pairs ===")
     t1 = time.time()
-    pairs_df = build_pairs_sampled(max_rank=50, pairs_per_stage=200)
+    pairs_df = build_pairs_sampled(max_rank=50, pairs_per_stage=200,
+                                   wt_only=args.wt_only)
 
     if len(pairs_df) == 0:
         log.error("No pairs built — is the database populated? Run scrape_all.py first.")
         sys.exit(1)
 
     log.info(f"Built {len(pairs_df)} pairs ({_elapsed(t1)})")
+    if args.wt_only:
+        log.info("⚡ World Tour only mode — excluded lower-tier races")
     log.info(f"Label distribution:\n{pairs_df['label'].value_counts().to_string()}")
 
     log.info("\n=== Step 2: Computing features ===")

@@ -348,3 +348,35 @@ No weather feature appeared in the top 20 by XGBoost importance.
 4. ProCyclingStats already provides `avg_temperature` for 49% of stages, which the model already uses
 
 **Decision:** Weather features reverted from training pipeline. The `scripts/fetch_weather.py` script and DB tables (`geocoded_cities`, `stage_weather`) are kept for future use. Weather data is a fundamentally weak signal for H2H prediction because it's a race-level variable, not a rider-level variable.
+
+---
+
+## 2026-03-26 — WT-only training + startlist-relative features
+
+**Hypothesis:** Two changes tested together:
+1. **WT-only training**: The model trains on all race tiers but is only used for World Tour predictions. Lower-tier races (10% of data) may have different dynamics that add noise.
+2. **Startlist-relative features**: A rider's strength relative to the specific race field provides signal beyond their absolute stats. Features: `field_rank_quality` (percentile by career_top10_rate among starters), `field_rank_form` (percentile by form_90d_avg_pcs among starters), `field_strength_ratio` (rider quality / field average). Plus race-level `field_size` and `field_avg_quality`.
+
+**Method:**
+- Added `--wt-only` flag to `data/builder.py` → filters stages to `races.uci_tour IN ('1.UWT', '2.UWT')`
+- Added startlist-relative features in `features/pipeline.py` → pre-computes field composition from results table, computes percentiles using cached rider features (leakage-safe: uses pre-race rider stats only)
+- Ran `caffeinate -s python -u scripts/train.py` for baseline, all-data+startlist, and WT-only+startlist
+
+**Data split:**
+- All data: 1,419 stages → 283,376 pairs (237,976 train / 45,400 test)
+- WT-only: 1,275 stages → 255,000 pairs (215,400 train / 39,600 test)
+- Note: test sets differ (WT-only evaluates on WT races only, which matches the prediction use case)
+
+**Results (CalibratedXGBoost):**
+| Config | Accuracy | ROC-AUC | Brier Score | Log Loss |
+|--------|----------|---------|-------------|----------|
+| Baseline (all data, no startlist) | 0.6857 | 0.7548 | 0.200 | 0.586 |
+| All data + startlist features | 0.6857 | 0.7528 | 0.202 | 0.588 |
+| WT-only + startlist features | **0.6897** | **0.7601** | **0.199** | **0.582** |
+
+**Feature importance (WT-only model):**
+- `diff_field_rank_quality` — #3 at 0.0162 (top startlist feature)
+- `diff_field_strength_ratio` — #11 at 0.0103
+- `diff_field_rank_form` — not in top 20
+
+**Conclusion:** Combined WT-only + startlist features gives the best result across all metrics (+0.4% accuracy, +0.005 AUC over baseline). The startlist features alone on all data provide no benefit (slightly worse AUC), suggesting the improvement comes primarily from WT-only filtering — evaluating on WT-only test data removes noise from lower-tier race predictions. The startlist `field_rank_quality` feature does rank #3 in importance in the WT-only model, indicating it provides useful signal when the training distribution is more homogeneous. Both changes kept.

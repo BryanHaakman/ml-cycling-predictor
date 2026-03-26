@@ -86,20 +86,35 @@ def build_pairs_sampled(
     db_path: str = DB_PATH,
     max_rank: int = MAX_RANK_CUTOFF,
     pairs_per_stage: int = 200,
+    wt_only: bool = False,
 ) -> pd.DataFrame:
     """
     Like build_pairs but samples a fixed number of pairs per stage
     to keep the dataset manageable for very large result sets.
+
+    If wt_only=True, only include stages from World Tour races
+    (uci_tour IN ('1.UWT', '2.UWT')).
     """
     conn = get_db(db_path)
 
-    stages = conn.execute("""
-        SELECT DISTINCT s.url, s.date, s.race_url
-        FROM stages s
-        JOIN results r ON r.stage_url = s.url
-        WHERE s.date IS NOT NULL
-        ORDER BY s.date
-    """).fetchall()
+    if wt_only:
+        stages = conn.execute("""
+            SELECT DISTINCT s.url, s.date, s.race_url
+            FROM stages s
+            JOIN results r ON r.stage_url = s.url
+            JOIN races ra ON s.race_url = ra.url
+            WHERE s.date IS NOT NULL
+              AND ra.uci_tour IN ('1.UWT', '2.UWT')
+            ORDER BY s.date
+        """).fetchall()
+    else:
+        stages = conn.execute("""
+            SELECT DISTINCT s.url, s.date, s.race_url
+            FROM stages s
+            JOIN results r ON r.stage_url = s.url
+            WHERE s.date IS NOT NULL
+            ORDER BY s.date
+        """).fetchall()
 
     all_pairs = []
     for stage in stages:
