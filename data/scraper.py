@@ -621,6 +621,12 @@ def scrape_since_last(db_path: str = DB_PATH, tiers: list[str] = None):
             if enddate and enddate >= last_date:
                 # Race may have new results — delete cached stages and re-scrape
                 log.info(f"Re-checking {race_url} (enddate {enddate} >= {last_date})")
+                stage_urls = [r["url"] for r in conn.execute(
+                    "SELECT url FROM stages WHERE race_url = ?", (race_url,)
+                ).fetchall()]
+                for surl in stage_urls:
+                    conn.execute("DELETE FROM results WHERE stage_url = ?", (surl,))
+                    conn.execute("DELETE FROM stage_weather WHERE stage_url = ?", (surl,))
                 conn.execute("DELETE FROM stages WHERE race_url = ?", (race_url,))
                 conn.execute("DELETE FROM races WHERE url = ?", (race_url,))
                 conn.commit()
