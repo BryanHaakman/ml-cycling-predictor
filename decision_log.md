@@ -107,10 +107,11 @@ Training time: 27m 30s (18m features + 8m models). No segfault.
 
 - **Training data:** World Tour only (1.UWT, 2.UWT), all years 2018–2025
 - **Pair generation:** max_rank=50, 200 pairs/stage (~283K total pairs)
-- **Features:** 271 features (19 race + 78×2 rider absolute + 78 rider diff + 5 H2H + 12 interaction)
-- **Best model:** CalibratedXGBoost — 68.6% accuracy, 0.756 ROC-AUC
+- **Features:** 284 features (20 race + 78×2 rider absolute + 78 rider diff + 5 H2H + 24 interaction)
+- **Best model:** CalibratedXGBoost — 68.7% accuracy, 0.757 ROC-AUC
 - **Train/test split:** Time-based, test years 2025–2026
-- **Training time:** ~23 minutes
+- **Training time:** ~12 minutes (with pre-computed feature cache)
+- **Feature cache:** `data/rider_features_cache.parquet` + `data/race_features_cache.parquet`
 
 ---
 
@@ -137,3 +138,97 @@ Training time: 27m 30s (18m features + 8m models). No segfault.
 **Decision:** ❌ REVERTED all changes. Accuracy dropped 8.6% (68.6% → 59.9%) and training time nearly tripled. Likely causes: extreme sample weights (max 19.8×), rank-gap sampling changing data distribution, noisy new features (especially `team_best_rank` which had post-race data leakage), and slow DB-heavy feature computation (time-gap queries winner time per past result).
 
 **Lesson:** These changes should be tested individually, not all at once. Sample weights and sampling changes are the most risky since they fundamentally alter training distribution.
+
+---
+
+## 2026-03-26 — Feature cache integration
+
+**Hypothesis:** Pre-computing rider/race features to parquet and loading at train time will dramatically reduce training time.
+
+**Method:** `build_feature_matrix()` in pipeline.py now loads cached rider/race features from parquet. H2H and interaction features still computed live (pair-specific). Run `precompute_features.py` once after scraping (~18 min first time, ~1s incrementally), then training loads from cache.
+
+**Results:**
+| Step | Without cache | With cache |
+|------|-------------|------------|
+| Feature assembly | 15m 24s | 3m 44s |
+| Model training | 8m 0s | 8m 0s |
+| **Total** | **23m 25s** | **11m 44s** |
+
+**Decision:** ✅ Kept. 2× faster training with identical accuracy. Enables rapid experimentation.
+
+---
+
+## 2026-03-26 — Incremental feature improvements (tested individually)
+
+**Hypothesis:** Test fillna fix, race_tier, and new interaction features one at a time to find safe accuracy gains.
+
+**Method:** Each change tested independently with cached features (~12 min per run). All use `caffeinate` to prevent macOS sleep throttling.
+
+**Results:**
+| Experiment | Accuracy | ROC-AUC | Brier | Note |
+|-----------|----------|---------|-------|------|
+| Baseline (cached) | 0.684 | 0.753 | 0.202 | — |
+| + fillna fix | 0.687 | 0.754 | 0.201 | rank→50.0 default |
+| + race_tier | 0.685 | 0.753 | 0.202 | neutral (90% WT data) |
+| + interactions | **0.687** | **0.757** | **0.200** | quality×form = #2 feature |
+
+New interaction features:
+- `quality_x_form` = career_top10_rate × (1/form_90d_avg_rank) — **shot to #2 most important feature** (0.056 importance)
+- `terrain_x_form` = terrain_same_profile_top10 × (1/form_90d_avg_rank) — made top 20
+- `gc_x_profile` = spec_gc × profile_icon_num
+- `climber_x_mountain` = spec_climber × (1/mountain_avg_rank) × profile
+
+**Decision:** ✅ All three changes kept. Combined: 284 features, 68.7% acc, 0.757 AUC.
+
+---
+
+## 2026-03-26 — XGBoost hyperparameter search
+
+**Hypothesis:** Default XGB params (depth=8, n=300, lr=0.05) may not be optimal for 238K samples / 284 features.
+
+**Method:** Tested 8 configs varying depth (4-10), n_estimators (300-800), learning rate (0.02-0.05), subsample, colsample_bytree, min_child_weight.
+
+**Results:**
+| Config | Depth | N | LR | Accuracy | ROC-AUC |
+|--------|-------|---|-----|----------|---------|
+| Default | 8 | 300 | 0.050 | 0.680 | 0.750 |
+| Best | 8 | 500 | 0.030 | 0.684 | 0.752 |
+| Conservative | 4 | 800 | 0.020 | 0.678 | 0.745 |
+
+**Decision:** Marginal improvement. Not worth changing default params since CalibratedXGBoost already outperforms raw XGBoost.
+
+---
+
+## 2026-03-26 — Neural network architecture search
+
+**Hypothesis:** Different NN architectures might beat XGBoost on this dataset.
+
+**Method:** Tested 8 configs: baseline (256-128-64-32), wider (512-256-128-64), deeper (5 layers), low dropout (0.15), big batch (2048), small LR (3e-4), wide+lowdrop, mega (512-512-256-128-64).
+
+**Results:**
+| Config | Accuracy | ROC-AUC | Epochs | Time |
+|--------|----------|---------|--------|------|
+| baseline | 0.685 | 0.753 | 25 | 59s |
+| big_batch | 0.684 | **0.754** | 26 | 41s |
+| wider | 0.683 | 0.752 | 14 | 46s |
+| mega | 0.680 | 0.752 | 20 | 70s |
+
+**Decision:** NN matches XGBoost accuracy (~68.5%) but doesn't beat it. big_batch (bs=2048, lr=2e-3) was marginally best.
+
+---
+
+## 2026-03-26 — XGBoost + NN ensemble
+
+**Hypothesis:** Blending XGBoost and NN predictions may capture different patterns and improve accuracy.
+
+**Method:** Trained XGBoost (n=500, depth=8, lr=0.03) and NN (big_batch config). Tested weighted average blends from 0.3/0.7 to 0.7/0.3.
+
+**Results:**
+| Blend (XGB/NN) | Accuracy | ROC-AUC | Brier |
+|----------------|----------|---------|-------|
+| XGBoost alone | 0.683 | 0.751 | — |
+| NN alone | 0.681 | 0.748 | — |
+| 0.5/0.5 | 0.687 | 0.755 | 0.201 |
+| **0.6/0.4** | **0.687** | **0.755** | **0.201** |
+
+**Decision:** Ensemble slightly better than either model alone (+0.4% AUC over XGB). However, CalibratedXGBoost with the new interactions already achieves 0.757 AUC, so the ensemble doesn't beat calibrated XGB.
