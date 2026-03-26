@@ -2,7 +2,7 @@
 
 ML-powered prediction of head-to-head cycling race outcomes. Given two riders and a race profile, the system predicts which rider will finish ahead — directly mirroring cycling betting markets (e.g., "Pogačar vs Vingegaard in Stage 14").
 
-The pipeline scrapes historical results from ProCyclingStats, engineers **270 features** per matchup, benchmarks **5 ML models**, and serves predictions through a Flask web app with **Kelly Criterion** staking advice and a full **P&L tracker**.
+The pipeline scrapes historical results from ProCyclingStats, engineers **295 features** per matchup, benchmarks **5 ML models**, and serves predictions through a Flask web app with **Kelly Criterion** staking advice and a full **P&L tracker**.
 
 ---
 
@@ -30,10 +30,10 @@ The pipeline scrapes historical results from ProCyclingStats, engineers **270 fe
   - [Races Covered](#races-covered)
   - [Scraper Details](#scraper-details)
 - [Feature Engineering](#feature-engineering)
-  - [Race Features (19)](#race-features-19)
+  - [Race Features (22)](#race-features-22)
   - [Rider Features (78 per rider)](#rider-features-78-per-rider)
   - [Derived Feature Groups](#derived-feature-groups)
-  - [Complete Feature Breakdown (270 total)](#complete-feature-breakdown-270-total)
+  - [Complete Feature Breakdown (295 total)](#complete-feature-breakdown-295-total)
 - [Models](#models)
   - [Model Architectures](#model-architectures)
   - [Training Pipeline](#training-pipeline)
@@ -51,7 +51,7 @@ The pipeline scrapes historical results from ProCyclingStats, engineers **270 fe
 ## Features
 
 - **5 ML models** benchmarked: Logistic Regression, Random Forest, XGBoost, Neural Network, Calibrated XGBoost
-- **270 engineered features**: race profile, rider form (multiple time windows), specialty scores, terrain affinity, career stats, head-to-head history, interaction terms
+- **295 engineered features**: race profile, rider form (multiple time windows), specialty scores, terrain affinity, career stats, head-to-head history, startlist-relative strength, interaction terms
 - **Kelly Criterion** staking with full/half/quarter Kelly recommendations
 - **P&L tracker** with bankroll management, bet history, ROI/win-rate stats, bankroll chart, and auto-settle from scraped results
 - **Dark-themed web UI** with rider/race autocomplete search
@@ -117,7 +117,7 @@ python scripts/train.py
 
 # 3. Launch web app
 python webapp/app.py
-# Open http://localhost:5000
+# Open http://localhost:5001
 ```
 
 ---
@@ -172,13 +172,14 @@ python scripts/update_races.py
 ### 3. Train Models
 
 ```bash
-python scripts/train.py
+python scripts/train.py            # Train on all races
+python scripts/train.py --wt-only  # Train on World Tour races only (recommended)
 ```
 
 Pipeline steps:
 1. **Build H2H pairs** — `build_pairs_sampled(max_rank=50, pairs_per_stage=200)` generates training pairs from race results
-2. **Engineer features** — builds 270-dimensional feature vectors for each pair
-3. **Benchmark models** — trains 5 models with time-based split, saves best artifacts
+2. **Engineer features** — builds 295-dimensional feature vectors for each pair (including startlist-relative features)
+3. **Benchmark models** — trains 4 models with time-based split, saves best artifacts
 
 Training outputs saved to `models/trained/`:
 - `scaler.pkl` — fitted StandardScaler
@@ -214,7 +215,7 @@ Runs **20 experiments** comparing different feature group combinations, reports 
 python webapp/app.py
 ```
 
-- Runs Flask in debug mode on `http://localhost:5000`
+- Runs Flask in debug mode on `http://localhost:5001`
 - Requires trained models in `models/trained/`
 - Requires scraped data in `data/cache.db`
 - Pages: Predictions (`/`), Results Browser (`/results`), P&L Tracker (`/pnl`)
@@ -593,7 +594,7 @@ Unique constraint: `(stage_url, rider_url)`
 
 ## Feature Engineering
 
-### Race Features (19)
+### Race Features (22)
 
 Extracted from each stage/race record. Shared between both riders in a pair.
 
@@ -618,6 +619,9 @@ Extracted from each stage/race record. Shared between both riders in a pair.
 | `max_climb_category` | Highest climb category (HC=5, Cat1=4, ..., Cat4=1) | Mapped from climbs_json |
 | `num_hc_climbs` | Number of Hors Catégorie climbs | Count from climbs_json |
 | `num_cat1_plus` | Number of Cat 1 or HC climbs | Count from climbs_json |
+| `race_tier` | UCI race classification encoded (1.UWT=6, 2.UWT=5, etc.) | Mapped from races.uci_tour |
+| `field_size` | Number of riders in the race | Computed from results |
+| `field_avg_quality` | Average career_top10_rate across all starters | Computed from rider features |
 
 **Climb category encoding**: `Cat4=1, Cat3=2, Cat2=3, Cat1=4, HC=5`
 
@@ -753,17 +757,17 @@ Cross-terms between rider specialty and race terrain:
 | `interact_b_sprint_x_flat` | `spec_sprint(B) × max(0, 1 − profile/3)` |
 | `interact_diff_sprint_x_flat` | A minus B |
 
-### Complete Feature Breakdown (270 total)
+### Complete Feature Breakdown (295 total)
 
 | Group | Count | Description |
 |-------|-------|-------------|
-| Race features (`race_*`) | 19 | Shared race/stage characteristics |
-| Diff rider features (`diff_*`) | 78 | Rider A − Rider B differences |
-| Absolute rider A (`a_*`) | 78 | Raw rider A features |
-| Absolute rider B (`b_*`) | 78 | Raw rider B features |
+| Race features (`race_*`) | 22 | Shared race/stage characteristics + field composition |
+| Diff rider features (`diff_*`) | 81 | Rider A − Rider B differences (incl. startlist-relative) |
+| Absolute rider A (`a_*`) | 81 | Raw rider A features (incl. startlist-relative) |
+| Absolute rider B (`b_*`) | 81 | Raw rider B features (incl. startlist-relative) |
 | H2H history | 5 | Head-to-head record |
-| Interaction terms | 12 | Specialty × terrain cross-features |
-| **Total** | **270** | |
+| Interaction terms | 24 | Specialty × terrain cross-features |
+| **Total** | **295** | |
 
 ---
 
@@ -818,7 +822,7 @@ All artifacts saved to `models/trained/`:
 | File | Contents |
 |------|----------|
 | `scaler.pkl` | Fitted `StandardScaler` |
-| `feature_names.json` | Ordered list of 270 feature names |
+| `feature_names.json` | Ordered list of 295 feature names |
 | `LogisticRegression.pkl` | Pickled sklearn model |
 | `RandomForest.pkl` | Pickled sklearn model |
 | `XGBoost.pkl` | Pickled XGBoost model |
@@ -830,26 +834,22 @@ Models are loaded lazily by the web app — no re-training needed between runs.
 
 ### Feature Ablation Results
 
-20 experiments tested with both XGBoost and Neural Network across multiple splits:
+Extensive experimentation across feature groups, model architectures, and hyperparameters. Current production model (CalibratedXGBoost, WT-only):
 
-| Experiment | Groups Used | XGB AUC | NN AUC |
-|---|---|---|---|
-| `all_features` | All 270 | 0.840 | 0.832 |
-| `no_physical` | Drop weight/height/BMI/age | **0.843** | 0.834 |
-| `no_interactions` | Drop interaction terms | 0.841 | 0.835 |
-| `no_absolute` | Drop abs rider features | 0.839 | 0.833 |
-| `no_h2h` | Drop H2H history | 0.840 | **0.838** |
-| `diff_only` | Only diff features | 0.838 | 0.830 |
-| `race_only` | Only race features | 0.49 | 0.49 |
-| `random_baseline` | No features | 0.50 | 0.50 |
+| Model | Accuracy | ROC-AUC | Brier Score |
+|-------|----------|---------|-------------|
+| CalibratedXGBoost | **0.690** | **0.760** | **0.199** |
+| XGBoost | 0.685 | 0.757 | 0.200 |
+| RandomForest | 0.671 | 0.736 | 0.209 |
+| LogisticRegression | 0.664 | 0.724 | 0.212 |
 
 **Key findings:**
 - **Diff features carry ~95% of signal** — rider A minus rider B differences are the most predictive
-- **Physical stats add noise** — dropping weight/height/BMI/age improved XGBoost by 0.003 AUC
-- **Interactions are unnecessary** — XGBoost/NN learn these implicitly
-- **Race features alone ≈ random** (0.49 AUC) but improve predictions when combined with rider context
-- **H2H history is noisy** with limited data — NN benefits from dropping it
-- **Top features**: `diff_form_90d_top10`, `diff_career_top10_rate`, `diff_form_60d_top10`
+- **`diff_career_top10_rate`** is the single most important feature (0.16+ gain importance, 4× the next feature)
+- **Startlist-relative features** (`field_rank_quality`) rank #3 in importance — relative strength within race field matters
+- **Interaction terms** (`quality_x_form`, `sprint_x_flat`) provide meaningful signal at #2–3 importance
+- **WT-only training** improves accuracy vs training on all race tiers
+- **Top features**: `diff_career_top10_rate`, `interact_diff_sprint_x_flat`, `diff_field_rank_quality`, `interact_diff_quality_x_form`
 
 ---
 
@@ -954,7 +954,7 @@ cycling-predictor/
 │   ├── __init__.py
 │   ├── race_features.py        # 19 race features (distance, elevation, climbs, profile)
 │   ├── rider_features.py       # 78 rider features per rider (form, specialty, terrain, career)
-│   └── pipeline.py             # Full 270-feature pipeline + manual prediction support
+│   └── pipeline.py             # Full 295-feature pipeline + manual prediction support
 │                               # - build_feature_vector() for DB races
 │                               # - build_feature_vector_manual() for upcoming races
 │
@@ -988,7 +988,7 @@ cycling-predictor/
 │
 ├── webapp/
 │   ├── __init__.py
-│   ├── app.py                  # Flask app (15+ routes, port 5000, debug mode)
+│   ├── app.py                  # Flask app (15+ routes, port 5001, debug mode)
 │   └── templates/
 │       ├── index.html          # Prediction page (DB + manual mode, Kelly, log bet)
 │       ├── results.html        # Results browser (search, browse scraped results)
@@ -1068,7 +1068,7 @@ All rider features use **strictly pre-race data only** — the SQL queries filte
 
 ## Limitations
 
-- **Data volume matters** — model accuracy scales with scrape depth. 2 races ≈ 0.84 AUC; more data expected to improve
+- **Data volume matters** — model accuracy scales with scrape depth. Current: ~0.76 AUC with 1,275 World Tour stages
 - **ProCyclingStats availability** — scraper depends on PCS being accessible and Cloudflare not blocking
 - **No real-time odds** — bookmaker odds must be manually entered
 - **Rate limiting** — full scrape takes several hours
