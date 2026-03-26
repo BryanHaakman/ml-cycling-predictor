@@ -298,37 +298,149 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
     """
     Build feature matrix from pairs DataFrame.
 
+    Uses pre-computed rider/race feature caches when available (from
+    ``scripts/precompute_features.py``).  Falls back to live DB queries
+    when the cache is missing.
+
     Args:
         pairs_df: DataFrame with columns [stage_url, rider_a_url, rider_b_url, label]
 
     Returns:
         DataFrame with all features + label column
     """
+    from features.feature_store import load_rider_features_cache, load_race_features_cache
+
     conn = get_db(db_path)
     feature_names = get_all_feature_names()
 
+    # Try to load caches
+    rider_cache_df = load_rider_features_cache()
+    race_cache_df = load_race_features_cache()
+
+    rider_lookup = None
+    race_lookup = None
+
+    if rider_cache_df is not None:
+        rider_cache_df = rider_cache_df.set_index(["rider_url", "stage_url"])
+        rider_lookup = rider_cache_df.to_dict("index")
+        log.info(f"Loaded rider feature cache ({len(rider_lookup)} entries)")
+    else:
+        log.info("No rider feature cache found — computing live (slow)")
+
+    if race_cache_df is not None:
+        race_cache_df = race_cache_df.set_index("stage_url")
+        race_lookup = race_cache_df.to_dict("index")
+        log.info(f"Loaded race feature cache ({len(race_lookup)} entries)")
+    else:
+        log.info("No race feature cache found — computing live")
+
+    # Pre-fetch all stage dates in bulk (avoid per-pair DB query)
+    stage_dates = {}
+    for row in conn.execute("SELECT url, date FROM stages WHERE date IS NOT NULL").fetchall():
+        stage_dates[row["url"]] = row["date"]
+
     rows = []
     skipped = 0
+    cache_hits = 0
+    cache_misses = 0
     total = len(pairs_df)
-    for i, (_, pair) in enumerate(tqdm(pairs_df.iterrows(), total=total, desc="Computing features")):
-        fv = build_feature_vector(
-            conn,
-            pair["rider_a_url"],
-            pair["rider_b_url"],
-            pair["stage_url"],
-        )
-        if fv is None:
+
+    for i, (_, pair) in enumerate(tqdm(pairs_df.iterrows(), total=total, desc="Building feature matrix")):
+        stage_url = pair["stage_url"]
+        rider_a_url = pair["rider_a_url"]
+        rider_b_url = pair["rider_b_url"]
+
+        # --- Race features ---
+        if race_lookup and stage_url in race_lookup:
+            race_feats = race_lookup[stage_url]
+        else:
+            stage_row = conn.execute(
+                "SELECT * FROM stages WHERE url = ?", (stage_url,)
+            ).fetchone()
+            if not stage_row:
+                skipped += 1
+                continue
+            race_feats = extract_race_features(dict(stage_row))
+
+        # --- Get race_date for H2H ---
+        race_date = stage_dates.get(stage_url)
+        if not race_date:
             skipped += 1
             continue
 
-        row = [fv.get(name, 0.0) for name in feature_names]
+        # --- Rider features (from cache or live) ---
+        rider_a_key = (rider_a_url, stage_url)
+        rider_b_key = (rider_b_url, stage_url)
+
+        if rider_lookup and rider_a_key in rider_lookup and rider_b_key in rider_lookup:
+            rider_a_feats = rider_lookup[rider_a_key]
+            rider_b_feats = rider_lookup[rider_b_key]
+            cache_hits += 1
+        else:
+            rider_a_feats = compute_rider_features(conn, rider_a_url, race_date, stage_url)
+            rider_b_feats = compute_rider_features(conn, rider_b_url, race_date, stage_url)
+            cache_misses += 1
+
+        # --- Assemble feature vector ---
+        features = {}
+
+        # Race features
+        for k in RACE_FEATURE_NAMES:
+            features[f"race_{k}"] = float(race_feats.get(k, 0.0) or 0.0)
+
+        # Diff + absolute rider features
+        for name in RIDER_FEATURE_NAMES:
+            val_a = float(rider_a_feats.get(name, 0.0) or 0.0)
+            val_b = float(rider_b_feats.get(name, 0.0) or 0.0)
+            features[f"diff_{name}"] = val_a - val_b
+            features[f"a_{name}"] = val_a
+            features[f"b_{name}"] = val_b
+
+        # H2H history (always computed live — pair-specific)
+        h2h = compute_h2h_history(conn, rider_a_url, rider_b_url, race_date)
+        for k, v in h2h.items():
+            features[k] = v
+
+        # Interaction features
+        profile = race_feats.get("profile_icon_num", 1) or 1
+        vert = race_feats.get("vertical_meters", 0) or 0
+        is_itt = race_feats.get("is_itt", 0) or 0
+
+        a_climber = rider_a_feats.get("spec_climber", 0) or 0
+        b_climber = rider_b_feats.get("spec_climber", 0) or 0
+        a_tt = rider_a_feats.get("spec_tt", 0) or 0
+        b_tt = rider_b_feats.get("spec_tt", 0) or 0
+        a_sprint = rider_a_feats.get("spec_sprint", 0) or 0
+        b_sprint = rider_b_feats.get("spec_sprint", 0) or 0
+
+        features["interact_a_climber_x_profile"] = a_climber * profile
+        features["interact_b_climber_x_profile"] = b_climber * profile
+        features["interact_diff_climber_x_profile"] = (a_climber - b_climber) * profile
+
+        features["interact_a_climber_x_vert"] = a_climber * (vert / 1000.0)
+        features["interact_b_climber_x_vert"] = b_climber * (vert / 1000.0)
+        features["interact_diff_climber_x_vert"] = (a_climber - b_climber) * (vert / 1000.0)
+
+        features["interact_a_tt_x_itt"] = a_tt * is_itt
+        features["interact_b_tt_x_itt"] = b_tt * is_itt
+        features["interact_diff_tt_x_itt"] = (a_tt - b_tt) * is_itt
+
+        flat_factor = max(0, 1 - profile / 3)
+        features["interact_a_sprint_x_flat"] = a_sprint * flat_factor
+        features["interact_b_sprint_x_flat"] = b_sprint * flat_factor
+        features["interact_diff_sprint_x_flat"] = (a_sprint - b_sprint) * flat_factor
+
+        row = [features.get(name, 0.0) for name in feature_names]
         row.append(pair["label"])
         rows.append(row)
 
         if (i + 1) % 5000 == 0:
-            log.info(f"  Progress: {i+1}/{total} pairs processed, {len(rows)} kept, {skipped} skipped")
+            log.info(f"  Progress: {i+1}/{total} pairs, {len(rows)} kept, {skipped} skipped")
 
     conn.close()
+
+    if rider_lookup:
+        log.info(f"Cache stats: {cache_hits} hits, {cache_misses} misses")
 
     columns = feature_names + ["label"]
     df = pd.DataFrame(rows, columns=columns)
