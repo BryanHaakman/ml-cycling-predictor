@@ -232,3 +232,38 @@ New interaction features:
 | **0.6/0.4** | **0.687** | **0.755** | **0.201** |
 
 **Decision:** Ensemble slightly better than either model alone (+0.4% AUC over XGB). However, CalibratedXGBoost with the new interactions already achieves 0.757 AUC, so the ensemble doesn't beat calibrated XGB.
+
+---
+
+## 2026-03-26 — Advanced Neural Network Techniques (12 experiments)
+
+**Hypothesis:** Advanced training techniques (label smoothing, focal loss, cosine annealing, residual networks, SWA, quantile transform, and combinations) may push NN accuracy beyond the baseline 68.2% / 0.752 AUC.
+
+**Method:** Ran 12 NN configurations using the same 256→128→64→32 base architecture with various modifications. All use AdamW, ReduceLROnPlateau (except cosine_anneal), early stopping patience=10, and the same train/test split (test years 2025–2026). Total runtime: 1279s (~21 min).
+
+**Results:**
+
+| Config | Accuracy | ROC-AUC | Brier Score | Epochs | Time |
+|--------|----------|---------|-------------|--------|------|
+| baseline | 0.6816 | 0.7524 | 0.2018 | 25 | 44s |
+| label_smooth_0.05 | **0.6821** | 0.7522 | 0.2019 | 25 | 57s |
+| label_smooth_0.1 | 0.6809 | 0.7518 | 0.2019 | 30 | 66s |
+| cosine_anneal | 0.6812 | **0.7525** | **0.2018** | 25 | 56s |
+| qt+label_smooth | 0.6820 | 0.7495 | 0.2029 | 29 | 61s |
+| quantile_transform | 0.6795 | 0.7483 | 0.2034 | 22 | 47s |
+| resnet_3block | 0.6783 | 0.7447 | 0.2049 | 17 | 69s |
+| resnet_5block | 0.6775 | 0.7467 | 0.2050 | 19 | 112s |
+| swa | 0.6739 | 0.7417 | 0.2082 | 50 | 122s |
+| focal_loss | 0.6728 | 0.7411 | 0.2130 | 48 | 98s |
+| wide_resnet+focal | 0.6685 | 0.7365 | 0.2108 | 22 | 232s |
+| kitchen_sink (all combined) | 0.4995 | 0.3891 | 0.5000 | 16 | 75s |
+
+**Conclusions:**
+1. **No technique beats the baseline NN** — the best (label_smooth_0.05) is only +0.05% acc, cosine_anneal +0.01 AUC. All within noise.
+2. **Focal loss hurts** — −0.9% acc, −1.1 AUC. It over-focuses on hard (likely noisy) examples.
+3. **ResNets underperform** — skip connections add complexity without benefit at this scale. Deeper ≠ better here.
+4. **SWA hurts** — trains full 50 epochs but averages over poor local minima.
+5. **kitchen_sink collapsed** — combining all techniques caused training failure (50% acc = random). Too many interacting modifications.
+6. **The NN accuracy ceiling is ~68.2% / 0.752 AUC** — this matches CalibratedXGBoost's uncalibrated performance. The limitation is features, not model architecture.
+
+**Decision:** No changes kept. The standard 256→128→64→32 NN with default training is already at peak performance for this feature set. CalibratedXGBoost (68.7% / 0.757 AUC) remains the production model. Future accuracy gains require new data sources or fundamentally different features, not model improvements.
