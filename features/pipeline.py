@@ -69,7 +69,9 @@ def build_feature_vector(
     essential data is missing.
     """
     stage_row = conn.execute(
-        "SELECT * FROM stages WHERE url = ?", (stage_url,)
+        """SELECT s.*, r.uci_tour FROM stages s
+           LEFT JOIN races r ON s.race_url = r.url
+           WHERE s.url = ?""", (stage_url,)
     ).fetchone()
 
     if not stage_row:
@@ -136,6 +138,42 @@ def build_feature_vector(
     features["interact_diff_sprint_x_flat"] = (
         features["interact_a_sprint_x_flat"] - features["interact_b_sprint_x_flat"]
     )
+
+    # GC specialist × mountain stage
+    a_gc = rider_a_feats.get("spec_gc", 0) or 0
+    b_gc = rider_b_feats.get("spec_gc", 0) or 0
+    features["interact_a_gc_x_profile"] = a_gc * profile
+    features["interact_b_gc_x_profile"] = b_gc * profile
+    features["interact_diff_gc_x_profile"] = (a_gc - b_gc) * profile
+
+    # Career quality × recent form
+    a_quality = rider_a_feats.get("career_top10_rate", 0) or 0
+    b_quality = rider_b_feats.get("career_top10_rate", 0) or 0
+    a_form = 1.0 / max(rider_a_feats.get("form_90d_avg_rank", 50) or 50, 1)
+    b_form = 1.0 / max(rider_b_feats.get("form_90d_avg_rank", 50) or 50, 1)
+    features["interact_a_quality_x_form"] = a_quality * a_form
+    features["interact_b_quality_x_form"] = b_quality * b_form
+    features["interact_diff_quality_x_form"] = a_quality * a_form - b_quality * b_form
+
+    # Terrain match × form
+    a_terrain = rider_a_feats.get("terrain_same_profile_top10", 0) or 0
+    b_terrain = rider_b_feats.get("terrain_same_profile_top10", 0) or 0
+    features["interact_a_terrain_x_form"] = a_terrain * a_form
+    features["interact_b_terrain_x_form"] = b_terrain * b_form
+    features["interact_diff_terrain_x_form"] = a_terrain * a_form - b_terrain * b_form
+
+    # Climbing specialist × mountain performance
+    a_climber = rider_a_feats.get("spec_climber", 0) or 0
+    b_climber = rider_b_feats.get("spec_climber", 0) or 0
+    a_mt = rider_a_feats.get("mountain_avg_rank", 50) or 50
+    b_mt = rider_b_feats.get("mountain_avg_rank", 50) or 50
+    a_mt_inv = 1.0 / max(a_mt, 1)
+    b_mt_inv = 1.0 / max(b_mt, 1)
+    features["interact_a_climber_x_mountain"] = a_climber * a_mt_inv * profile
+    features["interact_b_climber_x_mountain"] = b_climber * b_mt_inv * profile
+    features["interact_diff_climber_x_mountain"] = (
+        a_climber * a_mt_inv - b_climber * b_mt_inv
+    ) * profile
 
     return features
 
@@ -290,6 +328,18 @@ def get_all_feature_names() -> list[str]:
         "interact_a_tt_x_itt", "interact_b_tt_x_itt", "interact_diff_tt_x_itt",
         "interact_a_sprint_x_flat", "interact_b_sprint_x_flat",
         "interact_diff_sprint_x_flat",
+        # New: GC specialist × mountain stage
+        "interact_a_gc_x_profile", "interact_b_gc_x_profile",
+        "interact_diff_gc_x_profile",
+        # New: career quality × recent form
+        "interact_a_quality_x_form", "interact_b_quality_x_form",
+        "interact_diff_quality_x_form",
+        # New: terrain match × form (how good is rider on this terrain recently)
+        "interact_a_terrain_x_form", "interact_b_terrain_x_form",
+        "interact_diff_terrain_x_form",
+        # New: mountain specialist × mountain performance
+        "interact_a_climber_x_mountain", "interact_b_climber_x_mountain",
+        "interact_diff_climber_x_mountain",
     ])
     return names
 
@@ -355,7 +405,9 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
             race_feats = race_lookup[stage_url]
         else:
             stage_row = conn.execute(
-                "SELECT * FROM stages WHERE url = ?", (stage_url,)
+                """SELECT s.*, r.uci_tour FROM stages s
+                   LEFT JOIN races r ON s.race_url = r.url
+                   WHERE s.url = ?""", (stage_url,)
             ).fetchone()
             if not stage_row:
                 skipped += 1
@@ -430,6 +482,40 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
         features["interact_b_sprint_x_flat"] = b_sprint * flat_factor
         features["interact_diff_sprint_x_flat"] = (a_sprint - b_sprint) * flat_factor
 
+        # GC specialist × mountain stage
+        a_gc = rider_a_feats.get("spec_gc", 0) or 0
+        b_gc = rider_b_feats.get("spec_gc", 0) or 0
+        features["interact_a_gc_x_profile"] = a_gc * profile
+        features["interact_b_gc_x_profile"] = b_gc * profile
+        features["interact_diff_gc_x_profile"] = (a_gc - b_gc) * profile
+
+        # Career quality × recent form (top10_rate × 90d form rank inverted)
+        a_quality = rider_a_feats.get("career_top10_rate", 0) or 0
+        b_quality = rider_b_feats.get("career_top10_rate", 0) or 0
+        a_form = 1.0 / max(rider_a_feats.get("form_90d_avg_rank", 50) or 50, 1)
+        b_form = 1.0 / max(rider_b_feats.get("form_90d_avg_rank", 50) or 50, 1)
+        features["interact_a_quality_x_form"] = a_quality * a_form
+        features["interact_b_quality_x_form"] = b_quality * b_form
+        features["interact_diff_quality_x_form"] = a_quality * a_form - b_quality * b_form
+
+        # Terrain match × form
+        a_terrain = rider_a_feats.get("terrain_same_profile_top10", 0) or 0
+        b_terrain = rider_b_feats.get("terrain_same_profile_top10", 0) or 0
+        features["interact_a_terrain_x_form"] = a_terrain * a_form
+        features["interact_b_terrain_x_form"] = b_terrain * b_form
+        features["interact_diff_terrain_x_form"] = a_terrain * a_form - b_terrain * b_form
+
+        # Climbing specialist × mountain race performance
+        a_mt = rider_a_feats.get("mountain_avg_rank", 50) or 50
+        b_mt = rider_b_feats.get("mountain_avg_rank", 50) or 50
+        a_mt_inv = 1.0 / max(a_mt, 1)
+        b_mt_inv = 1.0 / max(b_mt, 1)
+        features["interact_a_climber_x_mountain"] = a_climber * a_mt_inv * profile
+        features["interact_b_climber_x_mountain"] = b_climber * b_mt_inv * profile
+        features["interact_diff_climber_x_mountain"] = (
+            a_climber * a_mt_inv - b_climber * b_mt_inv
+        ) * profile
+
         row = [features.get(name, 0.0) for name in feature_names]
         row.append(pair["label"])
         rows.append(row)
@@ -444,6 +530,17 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
 
     columns = feature_names + ["label"]
     df = pd.DataFrame(rows, columns=columns)
-    df = df.fillna(0.0)
+
+    # Domain-aware fillna: rank features default to 50 (median), others to 0
+    rank_keywords = ("avg_rank", "median_rank", "best_rank", "ranking")
+    for col in df.columns:
+        if col == "label":
+            continue
+        if df[col].isna().any():
+            if col.startswith(("a_", "b_")) and any(k in col for k in rank_keywords):
+                df[col] = df[col].fillna(50.0)
+            else:
+                df[col] = df[col].fillna(0.0)
+
     log.info(f"Built feature matrix: {df.shape[0]} rows × {df.shape[1]} columns")
     return df

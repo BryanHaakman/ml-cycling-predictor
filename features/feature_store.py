@@ -42,8 +42,13 @@ def _get_all_rider_stage_pairs(conn: sqlite3.Connection, max_rank: int = 50) -> 
 
 
 def _get_all_stages(conn: sqlite3.Connection) -> list[dict]:
-    """Get all stages for race feature extraction."""
-    rows = conn.execute("SELECT * FROM stages WHERE date IS NOT NULL").fetchall()
+    """Get all stages for race feature extraction, including uci_tour from races."""
+    rows = conn.execute("""
+        SELECT s.*, r.uci_tour
+        FROM stages s
+        LEFT JOIN races r ON s.race_url = r.url
+        WHERE s.date IS NOT NULL
+    """).fetchall()
     return [dict(row) for row in rows]
 
 

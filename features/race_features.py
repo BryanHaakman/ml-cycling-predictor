@@ -98,6 +98,15 @@ def extract_race_features(stage_row: dict) -> dict:
         features["num_hc_climbs"] = 0
         features["num_cat1_plus"] = 0
 
+    # Race tier (from uci_tour via races table, if available)
+    uci_tour = stage_row.get("uci_tour") or ""
+    tier_map = {
+        "1.UWT": 6, "2.UWT": 5, "WC": 6,
+        "1.Pro": 4, "2.Pro": 3, "1.HC": 4, "2.HC": 3,
+        "1.1": 2, "2.1": 2, "1.2": 1, "2.2": 1,
+    }
+    features["race_tier"] = tier_map.get(uci_tour, 2)
+
     return features
 
 
@@ -108,4 +117,5 @@ RACE_FEATURE_NAMES = [
     "is_itt", "is_ttt", "startlist_quality", "num_climbs",
     "avg_climb_steepness", "max_climb_steepness", "total_climb_length",
     "avg_climb_length", "max_climb_category", "num_hc_climbs", "num_cat1_plus",
+    "race_tier",
 ]
