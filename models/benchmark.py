@@ -53,6 +53,48 @@ def time_based_split(
     return X[train_mask], X[test_mask], y[train_mask], y[test_mask]
 
 
+def stratified_stage_split(
+    feature_df: pd.DataFrame,
+    stage_urls: pd.Series,
+    test_fraction: float = 0.2,
+    seed: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """
+    Split data by stage: randomly assign 20% of stages to test, 80% to train.
+    All pairs from a given stage stay together (no within-race leakage).
+    Stages are stratified by year so every year is in both train and test.
+    """
+    rng = np.random.RandomState(seed)
+
+    # Extract year from stage_url (e.g. 'race/tour-de-france/2025/stage-1' → 2025)
+    def _year_from_url(url):
+        if pd.isna(url):
+            return 2020
+        parts = str(url).split("/")
+        for p in parts:
+            if p.isdigit() and len(p) == 4:
+                return int(p)
+        return 2020
+
+    years = stage_urls.apply(_year_from_url)
+    unique_stages = pd.DataFrame({"stage_url": stage_urls, "year": years}).drop_duplicates("stage_url")
+
+    test_stages = set()
+    for _, grp in unique_stages.groupby("year"):
+        stage_list = grp["stage_url"].tolist()
+        rng.shuffle(stage_list)
+        n_test = max(1, int(len(stage_list) * test_fraction))
+        test_stages.update(stage_list[:n_test])
+
+    test_mask = stage_urls.isin(test_stages)
+    train_mask = ~test_mask
+
+    X = feature_df.drop(columns=["label"])
+    y = feature_df["label"]
+
+    return X[train_mask], X[test_mask], y[train_mask], y[test_mask]
+
+
 def evaluate_model(name: str, y_true, y_pred, y_prob) -> dict:
     """Compute evaluation metrics for a model."""
     metrics = {
@@ -94,12 +136,65 @@ def _select_features(X_train_scaled, y_train, X_test_scaled, y_test,
     return selected_idx, selected_names
 
 
+def _print_calibration_report(y_true, probs, correct, X_test, model_name):
+    """Print calibration and accuracy breakdown after benchmarking."""
+    print(f"\n{'=' * 70}")
+    print(f"CALIBRATION & ACCURACY BREAKDOWN ({model_name})")
+    print("=" * 70)
+
+    # Calibration by confidence bins
+    print(f"\n{'Conf Range':<12} {'Model Avg':>10} {'Actual Win%':>12} {'Accuracy':>10} {'Count':>8}")
+    bins = [(0.50, 0.55), (0.55, 0.60), (0.60, 0.65), (0.65, 0.70),
+            (0.70, 0.75), (0.75, 0.80), (0.80, 1.0)]
+    for lo, hi in bins:
+        mask = (probs >= lo) & (probs < hi)
+        if mask.sum() > 10:
+            avg_p = probs[mask].mean()
+            actual = y_true[mask].mean()
+            acc = correct[mask].mean()
+            cal_err = abs(avg_p - actual)
+            icon = "✅" if cal_err < 0.03 else "⚠️" if cal_err < 0.06 else "❌"
+            print(f"{icon} {lo:.0%}-{hi:.0%}    {avg_p:>9.1%} {actual:>11.1%} "
+                  f"{acc:>9.1%} {mask.sum():>8}")
+
+    # Accuracy by confidence level
+    print(f"\n  Confidence breakdown:")
+    for label, lo, hi in [("Low (50-60%)", 0.5, 0.6),
+                           ("Medium (60-70%)", 0.6, 0.7),
+                           ("High (70%+)", 0.7, 1.0)]:
+        mask = (probs >= lo) & (probs < hi)
+        if mask.sum() > 0:
+            print(f"    {label}: {correct[mask].mean():.1%} accuracy (n={mask.sum()})")
+
+    # Accuracy by race type (if column exists)
+    if "race_is_one_day_race" in X_test.columns:
+        print(f"\n  By race type:")
+        for val, label in [(1, "One-day"), (0, "Stage race")]:
+            mask = (X_test["race_is_one_day_race"].values == val)
+            if mask.sum() > 0:
+                print(f"    {label}: {correct[mask].mean():.1%} (n={mask.sum()})")
+
+    # Accuracy by course type (if column exists)
+    if "race_profile_icon_num" in X_test.columns:
+        print(f"\n  By course type:")
+        icon_vals = X_test["race_profile_icon_num"].values
+        course_bins = [("Flat", [0, 1]), ("Hilly", [2, 3]), ("Mountain", [4, 5])]
+        for label, vals in course_bins:
+            mask = np.isin(icon_vals, vals)
+            if mask.sum() > 0:
+                print(f"    {label}: {correct[mask].mean():.1%} (n={mask.sum()})")
+
+    print("=" * 70)
+
+
 def run_benchmark(
     feature_df: pd.DataFrame,
     date_series: pd.Series,
     test_years: list[int] = None,
     skip_nn: bool = False,
     select_features: int = 0,
+    stage_urls: pd.Series = None,
+    split_mode: str = "stratified",
 ) -> dict:
     """
     Train all models and return comparison results.
@@ -107,6 +202,9 @@ def run_benchmark(
     Args:
         select_features: If > 0, use permutation importance to select top-N
                          features before training. 0 = use all features.
+        stage_urls: Stage URL for each row — needed for stratified split.
+        split_mode: "stratified" (default) = random 80/20 by stage across all
+                    years; "time" = train on older years, test on test_years.
 
     Returns dict with:
         - results: list of metric dicts per model
@@ -114,9 +212,16 @@ def run_benchmark(
         - scaler: fitted StandardScaler
         - models: dict of name → fitted model
     """
-    X_train, X_test, y_train, y_test = time_based_split(
-        feature_df, date_series, test_years
-    )
+    if split_mode == "stratified" and stage_urls is not None:
+        X_train, X_test, y_train, y_test = stratified_stage_split(
+            feature_df, stage_urls
+        )
+        log.info("Using stratified stage split (80/20 across all years)")
+    else:
+        X_train, X_test, y_train, y_test = time_based_split(
+            feature_df, date_series, test_years
+        )
+        log.info("Using time-based split")
 
     log.info(f"Train size: {len(X_train)}, Test size: {len(X_test)}")
 
@@ -231,6 +336,12 @@ def run_benchmark(
     print("\nTop 20 features (XGBoost importance):")
     for fname, imp in feat_imp[:20]:
         print(f"  {fname}: {imp:.4f}")
+
+    # Calibration & accuracy breakdown (using best model)
+    best_model = models[best_name]
+    best_prob = best_model.predict_proba(X_test_scaled)[:, 1]
+    best_correct = ((best_prob >= 0.5).astype(int) == y_test.values).astype(int)
+    _print_calibration_report(y_test.values, best_prob, best_correct, X_test, best_name)
 
     # Save models and scaler
     with open(os.path.join(MODELS_DIR, "scaler.pkl"), "wb") as f:

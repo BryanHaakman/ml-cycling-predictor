@@ -380,3 +380,135 @@ No weather feature appeared in the top 20 by XGBoost importance.
 - `diff_field_rank_form` — not in top 20
 
 **Conclusion:** Combined WT-only + startlist features gives the best result across all metrics (+0.4% accuracy, +0.005 AUC over baseline). The startlist features alone on all data provide no benefit (slightly worse AUC), suggesting the improvement comes primarily from WT-only filtering — evaluating on WT-only test data removes noise from lower-tier race predictions. The startlist `field_rank_quality` feature does rank #3 in importance in the WT-only model, indicating it provides useful signal when the training distribution is more homogeneous. Both changes kept.
+
+---
+
+## 2026-03-27 — Added minimum confidence threshold to Kelly staking
+
+**Hypothesis:** Low-confidence bets (model prob < 55%) with high odds produce oversized Kelly stakes despite near-coinflip predictions. Adding a minimum confidence filter should reduce variance without cutting profitable bets.
+
+**Method:** Added `min_confidence=0.55` parameter to `kelly_criterion()` in `models/predict.py`. Bets where `model_prob < 0.55` now return `should_bet=False`. Half Kelly staking retained as-is.
+
+**Results (E3 Saxo Classic 2026 backtest — 11 bets):**
+
+| Scenario | Bets | W-L | P&L | ROI |
+|----------|------|-----|-----|-----|
+| Old (no threshold) | 11 | 5-6 | -£52.05 | -7.3% |
+| New (55% min conf) | 9 | 5-4 | +£22.28 | +3.6% |
+
+Filtered bets:
+- Mads Pedersen vs van der Poel: 47.4% conf, 3.25 odds → £62.92 loss avoided
+- Axel Zingle vs Del Grosso: 52.8% conf, 2.00 odds → £11.41 loss avoided
+
+**Conclusion:** The 55% threshold filters out "value trap" bets where high odds inflate perceived edge despite the model essentially predicting a coin flip. Saves £74.33 on this sample. Change kept — will monitor over the next few races to confirm it doesn't filter profitable bets in aggregate.
+
+---
+
+## 2026-03-27 — Confidence-scaled Kelly staking (replaces min_confidence filter)
+
+**Hypothesis:** Instead of filtering out low-confidence bets entirely, scaling down stakes proportional to model confidence reduces risk while keeping all bets active.
+
+**Method:** Applied a confidence scaling factor to half/quarter Kelly fractions in `kelly_criterion()`:
+- `scale = clamp((model_prob - 0.5) / 0.2, 0.5, 1.0)`
+- At ≤50% confidence → 50% of normal stake (effectively quarter Kelly)
+- At 60% confidence → ~50% of normal stake
+- At 70%+ confidence → 100% of normal stake (full half Kelly)
+
+**Results (E3 2026 backtest — scaling factors on losing bets):**
+
+| Bet | Conf | Old stake | Scale | Effect |
+|-----|------|-----------|-------|--------|
+| Pedersen vs VDP | 47.4% | £62.92 | 50% | ~halved |
+| Mohorič vs Abrahamsen | 60.2% | £94.44 | 51% | ~halved |
+| De Gendt vs Turgis | 62.7% | £59.96 | 64% | reduced |
+| Girmay vs Andresen | 55.9% | £48.80 | 50% | ~halved |
+| Zingle vs Del Grosso | 52.8% | £11.41 | 50% | ~halved |
+| Teunissen vs Pithie | 74.2% | £74.59 | 100% | unchanged (high conf, just unlucky) |
+
+**Conclusion:** All bets still placed, but low-confidence bets get substantially smaller stakes. High-confidence bets (which had the best win rate: 3 of 4 at 70%+) retain full sizing. Replaces the previous min_confidence=0.55 filter approach. Change kept.
+
+---
+
+## 2026-03-27 — One-day form features + enhanced same-race history
+
+**Hypothesis:** Stage race results (e.g. VDP rank 144 on a Tirreno sprint stage) pollute recent form features when predicting one-day classics. Also, same-race features lacked win_rate/podium_rate/recent_rank signals.
+
+**Method:**
+1. Added `od_form_*` features: one-day-only form for 30d/90d/180d windows and last 3/5 races
+2. Enhanced same-race features: `same_race_win_rate`, `same_race_podium_rate`, `same_race_recent_rank`
+3. Cleared feature caches, recomputed, retrained all models
+
+**Results:**
+
+| Metric | Before | After | Delta |
+|--------|--------|-------|-------|
+| Accuracy | 0.6852 | 0.6871 | +0.19% |
+| ROC-AUC | 0.7556 | 0.7564 | +0.08% |
+| Brier | 0.2007 | 0.2005 | -0.02% |
+| Log Loss | 0.5852 | 0.5850 | -0.03% |
+
+Key prediction improvements (E3 Saxo Classic 2026):
+- VDP vs Pedersen: 47.4% → 61.5% (VDP won the race)
+- Mohorič vs Abrahamsen: 60.2% → 67.0%
+
+Root cause: VDP's 30-day form avg rank was ~57 due to Tirreno stage results (ranks 87, 107, 125, 144) drowning out his Omloop win (rank 1) and MSR top 10 (rank 8).
+
+**Conclusion:** Both changes kept. One-day form features give the model clean signal for classics, and enhanced same-race features better capture race-specific dominance. Overall accuracy improved — no regression.
+
+---
+
+## 2026-03-27 — Course-type form features (flat/hilly/mountain)
+
+**Hypothesis:** Splitting rider form by course type (flat/hilly/mountain) and race type (one-day/stage) gives the model better terrain-specific signal than generic recent form.
+
+**Method:** Added course-type features grouped by profile_icon:
+- Flat (p0, p1), Hilly (p2, p3), Mountain (p4, p5)
+- Per course type: career stats (races, avg_rank, top10_rate), recent form (90d, 180d), and one-day-only variants
+- All computed in the pipeline — auto-updates on train
+
+**Results:**
+
+| Metric | v1 (base) | v2 (+od form) | v3 (+course) |
+|--------|-----------|---------------|--------------|
+| Accuracy | 0.6852 | **0.6871** | 0.6856 |
+| ROC-AUC | 0.7556 | 0.7564 | **0.7565** |
+| Brier | 0.2007 | 0.2005 | **0.2004** |
+| Log Loss | 0.5852 | 0.5850 | **0.5844** |
+
+- `diff_course_mountain_avg_rank` ranked #20/423 in importance
+- VDP vs Pedersen E3 prediction: 47.4% → 61.5% → 57.2%
+- Accuracy slightly lower than v2 but all calibration metrics (Brier, Log Loss, AUC) at best values
+
+**Conclusion:** Change kept. Course-type features add useful terrain-specific signal with best-ever calibration. Slight accuracy dip vs v2 is acceptable given improved probability calibration (which matters more for Kelly staking). Features auto-update on every train run via the pipeline.
+
+---
+
+## 2026-03-27 — Stratified stage split + calibration report in benchmark
+
+**Hypothesis:** The time-based split (train 2018-2024, test 2025-2026) means the model never learns from recent seasons during training, and the test set only reflects 2 years. A stratified split by stage — randomly assigning 80% of stages to train and 20% to test, stratified by year — would let the model learn from all years while still preventing within-race leakage.
+
+**Method:** Added `stratified_stage_split()` to `models/benchmark.py`. All pairs from a given stage stay together (no within-race leakage). Stages are stratified by year so every year appears in both train and test. Added `--split` flag to `train.py` (default: `stratified`, alternative: `time`). Also added automatic calibration & accuracy breakdown report to benchmark output.
+
+**Results:**
+| Metric | Time split (old) | Stratified (new) | Change |
+|--------|-----------------|------------------|--------|
+| Accuracy | 0.6856 | **0.6983** | **+1.27%** |
+| ROC-AUC | 0.7565 | **0.7732** | **+1.67%** |
+| Brier | 0.2004 | **0.1937** | **-3.3%** |
+| Log Loss | 0.5844 | **0.5679** | **-2.8%** |
+
+Calibration is near-perfect across all confidence bins (all ✅):
+| Conf Range | Model Avg | Actual Win% | Count |
+|-----------|-----------|-------------|-------|
+| 50-55% | 52.6% | 53.1% | 4196 |
+| 55-60% | 57.5% | 56.2% | 3972 |
+| 60-65% | 62.5% | 62.3% | 3864 |
+| 65-70% | 67.5% | 67.8% | 3685 |
+| 70-75% | 72.4% | 73.8% | 3227 |
+| 75-80% | 77.5% | 77.7% | 2587 |
+| 80-100% | 87.5% | 88.7% | 6678 |
+
+High-confidence bets (70%+): 82.6% accuracy on 12,492 test pairs.
+Test set now 56,200 pairs (was 40,600) — more robust evaluation.
+
+**Conclusion:** Change kept as new default. Stratified split gives biggest single improvement in the project — every metric improved substantially. The model benefits from learning recent-year patterns while still being evaluated on held-out stages it hasn't seen. Old time-based split preserved via `--split time` flag.

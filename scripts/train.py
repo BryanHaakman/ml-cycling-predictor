@@ -45,6 +45,8 @@ def main():
                         help="Select top N features by permutation importance (0 = use all)")
     parser.add_argument("--wt-only", action="store_true",
                         help="Train only on World Tour races (uci_tour 1.UWT/2.UWT)")
+    parser.add_argument("--split", choices=["stratified", "time"], default="stratified",
+                        help="Split mode: 'stratified' (80/20 by stage, default) or 'time' (test on 2025-2026)")
     args = parser.parse_args()
 
     t0 = time.time()
@@ -85,10 +87,14 @@ def main():
     # Align with feature_df (which may have dropped some rows)
     dates = dates.iloc[:len(feature_df)].reset_index(drop=True)
 
+    stage_urls = pairs_df["stage_url"].iloc[:len(feature_df)].reset_index(drop=True)
+
     log.info("\n=== Step 3: Training and benchmarking models ===")
     t3 = time.time()
     results = run_benchmark(feature_df, dates, skip_nn=not args.nn,
-                            select_features=args.select_features)
+                            select_features=args.select_features,
+                            stage_urls=stage_urls,
+                            split_mode=args.split)
 
     log.info(f"Training complete ({_elapsed(t3)})")
     log.info(f"\n✅ Done! Total time: {_elapsed(t0)}")

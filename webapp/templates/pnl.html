@@ -127,7 +127,7 @@
                     <tr>
                         <th>Date</th>
                         <th>Race</th>
-                        <th>Selection</th>
+                        <th>Matchup</th>
                         <th>Odds</th>
                         <th>Edge</th>
                         <th>Stake</th>
@@ -142,6 +142,15 @@
     </div>
 
     <script>
+        function formatMatchup(b) {
+            const nameA = b.rider_a_name || '—';
+            const nameB = b.rider_b_name || '—';
+            const sel = b.selection_name || '';
+            const boldA = sel === nameA ? 'font-weight:700' : 'opacity:0.6';
+            const boldB = sel === nameB ? 'font-weight:700' : 'opacity:0.6';
+            return `<span style="${boldA}">${nameA}</span> <span style="opacity:0.4;font-size:0.85em">vs</span> <span style="${boldB}">${nameB}</span>`;
+        }
+
         async function loadSummary() {
             const res = await fetch('/api/pnl/summary');
             const s = await res.json();
@@ -238,7 +247,7 @@
                 tbody.innerHTML += `<tr>
                     <td>${b.race_date || b.created_at?.split('T')[0] || '—'}</td>
                     <td>${b.race_name || '—'}</td>
-                    <td>${b.selection_name || '—'}</td>
+                    <td>${formatMatchup(b)}</td>
                     <td>${b.decimal_odds?.toFixed(2) || '—'}</td>
                     <td>${b.edge ? (b.edge * 100).toFixed(1) + '%' : '—'}</td>
                     <td>£${b.stake?.toFixed(2) || '—'}</td>
