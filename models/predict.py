@@ -68,6 +68,7 @@ def kelly_criterion(
     model_prob: float,
     decimal_odds: float,
     max_fraction: float = 0.25,
+    min_confidence: float = 0.55,
 ) -> KellyResult:
     """
     Calculate Kelly Criterion staking.
@@ -82,6 +83,9 @@ def kelly_criterion(
         model_prob: Model's predicted probability (0-1)
         decimal_odds: Bookmaker's decimal odds (e.g. 2.50)
         max_fraction: Cap on Kelly fraction to limit risk
+        min_confidence: Minimum model probability to place a bet.
+            Rejects low-confidence "value" bets where high odds
+            inflate perceived edge despite near-coinflip predictions.
 
     Returns:
         KellyResult with staking advice
@@ -102,7 +106,7 @@ def kelly_criterion(
     implied_prob = decimal_odds_to_implied_prob(decimal_odds)
     edge = model_prob - implied_prob
 
-    if kelly_f <= 0:
+    if kelly_f <= 0 or model_prob < min_confidence:
         return KellyResult(
             edge=edge,
             kelly_fraction=0,
