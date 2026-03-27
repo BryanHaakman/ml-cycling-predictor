@@ -193,6 +193,23 @@ def compute_rider_features(
             features[f"form_{n_name}_best_rank"] = min(r_ranks) if r_ranks else 50
             features[f"form_{n_name}_avg_pcs"] = np.mean(r_pcs) if r_pcs else 0.0
 
+        # One-day race form (excludes noisy stage race results)
+        oneday_results = [r for r in past_results if r["is_one_day_race"]]
+        for window_name, window_days in [("30d", 30), ("90d", 90), ("180d", 180)]:
+            cutoff = (datetime.fromisoformat(race_date) - timedelta(days=window_days)).isoformat()
+            window_od = [r for r in oneday_results if (r["date"] or "") >= cutoff]
+            od_ranks = [r["rank"] for r in window_od]
+            od_pcs = [r["pcs_points"] or 0 for r in window_od]
+            features[f"od_form_{window_name}_races"] = len(od_ranks)
+            features[f"od_form_{window_name}_avg_rank"] = np.mean(od_ranks) if od_ranks else 50.0
+            features[f"od_form_{window_name}_top10"] = sum(1 for r in od_ranks if r <= 10)
+
+        for n_name, n_races in [("last3", 3), ("last5", 5)]:
+            recent_od = oneday_results[:n_races]
+            rod_ranks = [r["rank"] for r in recent_od]
+            features[f"od_form_{n_name}_avg_rank"] = np.mean(rod_ranks) if rod_ranks else 50.0
+            features[f"od_form_{n_name}_best_rank"] = min(rod_ranks) if rod_ranks else 50
+
         # Terrain affinity: performance on similar profiles
         if manual_race:
             target_profile = manual_race.get("profile_score") or 0
@@ -275,19 +292,32 @@ def compute_rider_features(
 
         if race_base:
             same_race = conn.execute("""
-                SELECT r.rank, r.pcs_points FROM results r
+                SELECT r.rank, r.pcs_points, s.date FROM results r
                 JOIN stages s ON r.stage_url = s.url
                 WHERE r.rider_url = ? AND s.race_url LIKE ? AND s.date < ?
                 AND r.rank IS NOT NULL
+                ORDER BY s.date DESC
             """, (rider_url, f"{race_base}%", race_date)).fetchall()
             sr_ranks = [r["rank"] for r in same_race]
             features["same_race_history_count"] = len(sr_ranks)
             features["same_race_avg_rank"] = np.mean(sr_ranks) if sr_ranks else 50.0
             features["same_race_best_rank"] = min(sr_ranks) if sr_ranks else 50
+            features["same_race_win_rate"] = (
+                sum(1 for r in sr_ranks if r == 1) / len(sr_ranks)
+                if sr_ranks else 0.0
+            )
+            features["same_race_podium_rate"] = (
+                sum(1 for r in sr_ranks if r <= 3) / len(sr_ranks)
+                if sr_ranks else 0.0
+            )
+            features["same_race_recent_rank"] = sr_ranks[0] if sr_ranks else 50
         else:
             features["same_race_history_count"] = 0
             features["same_race_avg_rank"] = 50.0
             features["same_race_best_rank"] = 50
+            features["same_race_win_rate"] = 0.0
+            features["same_race_podium_rate"] = 0.0
+            features["same_race_recent_rank"] = 50
 
         # DNF rate (approximate: count stages where rider appeared vs total
         # stages in races where they started)
@@ -321,6 +351,15 @@ def compute_rider_features(
             features[f"form_{n}_best_rank"] = 50
             features[f"form_{n}_avg_pcs"] = 0.0
 
+        for w in ["30d", "90d", "180d"]:
+            features[f"od_form_{w}_races"] = 0
+            features[f"od_form_{w}_avg_rank"] = 50.0
+            features[f"od_form_{w}_top10"] = 0
+
+        for n in ["last3", "last5"]:
+            features[f"od_form_{n}_avg_rank"] = 50.0
+            features[f"od_form_{n}_best_rank"] = 50
+
         features["terrain_same_profile_races"] = 0
         features["terrain_same_profile_avg_rank"] = 50.0
         features["terrain_same_profile_top10"] = 0
@@ -337,6 +376,9 @@ def compute_rider_features(
         features["same_race_history_count"] = 0
         features["same_race_avg_rank"] = 50.0
         features["same_race_best_rank"] = 50
+        features["same_race_win_rate"] = 0.0
+        features["same_race_podium_rate"] = 0.0
+        features["same_race_recent_rank"] = 50
         features["breakaway_rate"] = 0.0
 
     return features
@@ -361,6 +403,11 @@ RIDER_FEATURE_NAMES = [
     "form_last5_avg_rank", "form_last5_best_rank", "form_last5_avg_pcs",
     "form_last10_avg_rank", "form_last10_best_rank", "form_last10_avg_pcs",
     "form_last20_avg_rank", "form_last20_best_rank", "form_last20_avg_pcs",
+    "od_form_30d_races", "od_form_30d_avg_rank", "od_form_30d_top10",
+    "od_form_90d_races", "od_form_90d_avg_rank", "od_form_90d_top10",
+    "od_form_180d_races", "od_form_180d_avg_rank", "od_form_180d_top10",
+    "od_form_last3_avg_rank", "od_form_last3_best_rank",
+    "od_form_last5_avg_rank", "od_form_last5_best_rank",
     "terrain_same_profile_races", "terrain_same_profile_avg_rank", "terrain_same_profile_top10",
     "terrain_sim_dist_races", "terrain_sim_dist_avg_rank",
     "mountain_races", "mountain_avg_rank",
@@ -368,5 +415,6 @@ RIDER_FEATURE_NAMES = [
     "one_day_races", "one_day_avg_rank",
     "itt_races", "itt_avg_rank",
     "same_race_history_count", "same_race_avg_rank", "same_race_best_rank",
+    "same_race_win_rate", "same_race_podium_rate", "same_race_recent_rank",
     "breakaway_rate",
 ]
