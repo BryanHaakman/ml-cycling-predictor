@@ -629,7 +629,18 @@ def scrape_since_last(db_path: str = DB_PATH, tiers: list[str] = None):
                     conn.execute("DELETE FROM stage_weather WHERE stage_url = ?", (surl,))
                 conn.execute("DELETE FROM stages WHERE race_url = ?", (race_url,))
                 conn.execute("DELETE FROM races WHERE url = ?", (race_url,))
+                conn.execute(
+                    "DELETE FROM scrape_log WHERE action = 'race_done' AND detail = ?",
+                    (race_url,)
+                )
                 conn.commit()
+        else:
+            # No race row but may have stale scrape_log entry — clear it
+            conn.execute(
+                "DELETE FROM scrape_log WHERE action = 'race_done' AND detail = ?",
+                (race_url,)
+            )
+            conn.commit()
 
         scrape_full_race(conn, race_base, current_year)
 
