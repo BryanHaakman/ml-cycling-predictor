@@ -210,6 +210,39 @@ def compute_rider_features(
             features[f"od_form_{n_name}_avg_rank"] = np.mean(rod_ranks) if rod_ranks else 50.0
             features[f"od_form_{n_name}_best_rank"] = min(rod_ranks) if rod_ranks else 50
 
+        # Course-type form: flat (p0/p1), hilly (p2/p3), mountain (p4/p5)
+        _course_bins = {
+            "flat": ("p0", "p1"),
+            "hilly": ("p2", "p3"),
+            "mountain": ("p4", "p5"),
+        }
+        for course_name, icons in _course_bins.items():
+            course_results = [
+                r for r in past_results if (r["profile_icon"] or "p1") in icons
+            ]
+            # Overall course-type stats
+            cr_ranks = [r["rank"] for r in course_results]
+            features[f"course_{course_name}_races"] = len(cr_ranks)
+            features[f"course_{course_name}_avg_rank"] = np.mean(cr_ranks) if cr_ranks else 50.0
+            features[f"course_{course_name}_top10_rate"] = (
+                sum(1 for r in cr_ranks if r <= 10) / len(cr_ranks)
+                if cr_ranks else 0.0
+            )
+            # Recent course-type form (90d / 180d)
+            for window_name, window_days in [("90d", 90), ("180d", 180)]:
+                cutoff = (datetime.fromisoformat(race_date) - timedelta(days=window_days)).isoformat()
+                window_cr = [r for r in course_results if (r["date"] or "") >= cutoff]
+                wcr_ranks = [r["rank"] for r in window_cr]
+                features[f"course_{course_name}_{window_name}_races"] = len(wcr_ranks)
+                features[f"course_{course_name}_{window_name}_avg_rank"] = (
+                    np.mean(wcr_ranks) if wcr_ranks else 50.0
+                )
+            # One-day only for this course type
+            course_od = [r for r in course_results if r["is_one_day_race"]]
+            cod_ranks = [r["rank"] for r in course_od]
+            features[f"course_{course_name}_od_races"] = len(cod_ranks)
+            features[f"course_{course_name}_od_avg_rank"] = np.mean(cod_ranks) if cod_ranks else 50.0
+
         # Terrain affinity: performance on similar profiles
         if manual_race:
             target_profile = manual_race.get("profile_score") or 0
@@ -360,6 +393,16 @@ def compute_rider_features(
             features[f"od_form_{n}_avg_rank"] = 50.0
             features[f"od_form_{n}_best_rank"] = 50
 
+        for course in ["flat", "hilly", "mountain"]:
+            features[f"course_{course}_races"] = 0
+            features[f"course_{course}_avg_rank"] = 50.0
+            features[f"course_{course}_top10_rate"] = 0.0
+            for w in ["90d", "180d"]:
+                features[f"course_{course}_{w}_races"] = 0
+                features[f"course_{course}_{w}_avg_rank"] = 50.0
+            features[f"course_{course}_od_races"] = 0
+            features[f"course_{course}_od_avg_rank"] = 50.0
+
         features["terrain_same_profile_races"] = 0
         features["terrain_same_profile_avg_rank"] = 50.0
         features["terrain_same_profile_top10"] = 0
@@ -408,6 +451,18 @@ RIDER_FEATURE_NAMES = [
     "od_form_180d_races", "od_form_180d_avg_rank", "od_form_180d_top10",
     "od_form_last3_avg_rank", "od_form_last3_best_rank",
     "od_form_last5_avg_rank", "od_form_last5_best_rank",
+    "course_flat_races", "course_flat_avg_rank", "course_flat_top10_rate",
+    "course_flat_90d_races", "course_flat_90d_avg_rank",
+    "course_flat_180d_races", "course_flat_180d_avg_rank",
+    "course_flat_od_races", "course_flat_od_avg_rank",
+    "course_hilly_races", "course_hilly_avg_rank", "course_hilly_top10_rate",
+    "course_hilly_90d_races", "course_hilly_90d_avg_rank",
+    "course_hilly_180d_races", "course_hilly_180d_avg_rank",
+    "course_hilly_od_races", "course_hilly_od_avg_rank",
+    "course_mountain_races", "course_mountain_avg_rank", "course_mountain_top10_rate",
+    "course_mountain_90d_races", "course_mountain_90d_avg_rank",
+    "course_mountain_180d_races", "course_mountain_180d_avg_rank",
+    "course_mountain_od_races", "course_mountain_od_avg_rank",
     "terrain_same_profile_races", "terrain_same_profile_avg_rank", "terrain_same_profile_top10",
     "terrain_sim_dist_races", "terrain_sim_dist_avg_rank",
     "mountain_races", "mountain_avg_rank",
