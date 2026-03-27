@@ -68,10 +68,9 @@ def kelly_criterion(
     model_prob: float,
     decimal_odds: float,
     max_fraction: float = 0.25,
-    min_confidence: float = 0.55,
 ) -> KellyResult:
     """
-    Calculate Kelly Criterion staking.
+    Calculate Kelly Criterion staking with confidence scaling.
 
     Kelly formula: f* = (bp - q) / b
     where:
@@ -79,13 +78,15 @@ def kelly_criterion(
         p = model's estimated probability of winning
         q = 1 - p (probability of losing)
 
+    Confidence scaling reduces stakes on low-confidence bets:
+        - 70%+ confidence → full half Kelly
+        - 50% confidence → quarter Kelly
+        - Linear interpolation between
+
     Args:
         model_prob: Model's predicted probability (0-1)
         decimal_odds: Bookmaker's decimal odds (e.g. 2.50)
         max_fraction: Cap on Kelly fraction to limit risk
-        min_confidence: Minimum model probability to place a bet.
-            Rejects low-confidence "value" bets where high odds
-            inflate perceived edge despite near-coinflip predictions.
 
     Returns:
         KellyResult with staking advice
@@ -106,7 +107,7 @@ def kelly_criterion(
     implied_prob = decimal_odds_to_implied_prob(decimal_odds)
     edge = model_prob - implied_prob
 
-    if kelly_f <= 0 or model_prob < min_confidence:
+    if kelly_f <= 0:
         return KellyResult(
             edge=edge,
             kelly_fraction=0,
@@ -119,11 +120,16 @@ def kelly_criterion(
     # Cap Kelly to avoid over-betting
     kelly_f = min(kelly_f, max_fraction)
 
+    # Confidence scaling: taper from half Kelly (at 70%+) to quarter Kelly (at 50%)
+    confidence_scale = max(0.5, min(1.0, (model_prob - 0.5) / 0.2))
+    scaled_half = kelly_f / 2 * confidence_scale
+    scaled_quarter = kelly_f / 4 * confidence_scale
+
     return KellyResult(
         edge=edge,
         kelly_fraction=kelly_f,
-        half_kelly=kelly_f / 2,
-        quarter_kelly=kelly_f / 4,
+        half_kelly=scaled_half,
+        quarter_kelly=scaled_quarter,
         expected_value=ev,
         should_bet=True,
     )
