@@ -78,10 +78,12 @@ def kelly_criterion(
         p = model's estimated probability of winning
         q = 1 - p (probability of losing)
 
-    Confidence scaling reduces stakes on low-confidence bets:
-        - 70%+ confidence → full half Kelly
-        - 50% confidence → quarter Kelly
-        - Linear interpolation between
+    Confidence scaling reduces stakes on low-confidence bets (sigmoid):
+        - 50% confidence → ~5% of half Kelly (near-nothing)
+        - 60% confidence → ~27% of half Kelly
+        - 65% confidence → ~50% of half Kelly
+        - 70% confidence → ~73% of half Kelly
+        - 80%+ confidence → ~95%+ of half Kelly (near-full)
 
     Args:
         model_prob: Model's predicted probability (0-1)
@@ -120,8 +122,10 @@ def kelly_criterion(
     # Cap Kelly to avoid over-betting
     kelly_f = min(kelly_f, max_fraction)
 
-    # Confidence scaling: taper from half Kelly (at 70%+) to quarter Kelly (at 50%)
-    confidence_scale = max(0.5, min(1.0, (model_prob - 0.5) / 0.2))
+    # Sigmoid confidence scaling: stays very low until ~65%, then ramps up
+    # 50% → 5%, 60% → 27%, 65% → 50%, 70% → 73%, 80% → 95%
+    import math
+    confidence_scale = 1.0 / (1.0 + math.exp(-(model_prob - 0.65) * 20))
     scaled_half = kelly_f / 2 * confidence_scale
     scaled_quarter = kelly_f / 4 * confidence_scale
 
