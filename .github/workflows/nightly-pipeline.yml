@@ -7,6 +7,7 @@ on:
   workflow_dispatch: # Allow manual triggers
 
 permissions:
+  contents: write
   actions: write
 
 jobs:
@@ -27,19 +28,28 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Restore database from cache
-        uses: actions/cache/restore@v4
-        with:
-          path: data/cache.db
-          key: cache-db-${{ github.run_id }}
-          restore-keys: |
-            cache-db-
+      - name: Restore database from snapshot
+        run: |
+          if [ -f data/db_snapshot.sql.gz ]; then
+            python scripts/load_db.py --force
+          else
+            echo "No snapshot found, starting fresh"
+          fi
 
       - name: Fetch latest race data
         run: python scripts/update_races.py --all-tiers --no-settle
 
-      - name: Save database to cache
-        uses: actions/cache/save@v4
-        with:
-          path: data/cache.db
-          key: cache-db-${{ github.run_id }}
+      - name: Dump database snapshot
+        run: python scripts/dump_db.py
+
+      - name: Commit updated snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/db_snapshot.sql.gz
+          if git diff --cached --quiet; then
+            echo "No data changes to commit"
+          else
+            git commit -m "data: nightly snapshot $(date -u +%Y-%m-%d)"
+            git push
+          fi
