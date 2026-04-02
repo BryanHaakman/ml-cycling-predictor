@@ -1,0 +1,45 @@
+name: Nightly Data Fetch
+
+on:
+  schedule:
+    # Runs at midnight UTC every night
+    - cron: '0 0 * * *'
+  workflow_dispatch: # Allow manual triggers
+
+permissions:
+  actions: write
+
+jobs:
+  fetch-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore database from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache.db
+          key: cache-db-${{ github.run_id }}
+          restore-keys: |
+            cache-db-
+
+      - name: Fetch latest race data
+        run: python scripts/update_races.py --no-settle
+
+      - name: Save database to cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache.db
+          key: cache-db-${{ github.run_id }}
