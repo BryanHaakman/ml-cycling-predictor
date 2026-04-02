@@ -36,7 +36,7 @@ jobs:
             cache-db-
 
       - name: Fetch latest race data
-        run: python scripts/update_races.py --no-settle
+        run: python scripts/update_races.py --all-tiers --no-settle
 
       - name: Save database to cache
         uses: actions/cache/save@v4
