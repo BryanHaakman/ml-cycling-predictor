@@ -11,7 +11,7 @@ import time
 import json
 import logging
 import os
-import signal
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError
 from datetime import datetime, date
 from typing import Optional
 
@@ -46,28 +46,23 @@ class _FetchTimeout(Exception):
     pass
 
 
-def _timeout_handler(signum, frame):
-    raise _FetchTimeout("Request timed out")
-
-
 def _pcs_fetch(pcs_class, url, retries=MAX_RETRIES):
     """Fetch and parse a PCS page with automatic retry on server errors."""
     for attempt in range(retries):
         _rate_limit()
-        # Set an alarm so we don't hang forever
-        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(FETCH_TIMEOUT)
         try:
-            obj = pcs_class(url)
-            signal.alarm(0)  # cancel alarm
-            return obj
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(pcs_class, url)
+                try:
+                    return future.result(timeout=FETCH_TIMEOUT)
+                except _FuturesTimeoutError:
+                    backoff = REQUEST_DELAY * (attempt + 2)
+                    log.warning(f"Request timed out on {url}, retrying in {backoff:.1f}s (attempt {attempt+1}/{retries})")
+                    time.sleep(backoff)
+                    continue
         except _FetchTimeout:
-            backoff = REQUEST_DELAY * (attempt + 2)
-            log.warning(f"Request timed out on {url}, retrying in {backoff:.1f}s (attempt {attempt+1}/{retries})")
-            time.sleep(backoff)
             continue
         except Exception as e:
-            signal.alarm(0)  # cancel alarm
             err_str = str(e)
             # Retry on server errors (500, 503, etc.) or Cloudflare blocks
             if any(code in err_str for code in ["500", "502", "503", "429", "Cloudflare"]):
@@ -76,8 +71,6 @@ def _pcs_fetch(pcs_class, url, retries=MAX_RETRIES):
                 time.sleep(backoff)
                 continue
             raise  # re-raise non-retryable errors
-        finally:
-            signal.signal(signal.SIGALRM, old_handler)
     # Final attempt — let it raise
     _rate_limit()
     return pcs_class(url)

@@ -344,6 +344,42 @@ def build_feature_vector_manual(
         features["interact_a_sprint_x_flat"] - features["interact_b_sprint_x_flat"]
     )
 
+    # GC specialist × mountain stage
+    a_gc = rider_a_feats.get("spec_gc", 0) or 0
+    b_gc = rider_b_feats.get("spec_gc", 0) or 0
+    features["interact_a_gc_x_profile"] = a_gc * profile
+    features["interact_b_gc_x_profile"] = b_gc * profile
+    features["interact_diff_gc_x_profile"] = (a_gc - b_gc) * profile
+
+    # Career quality × recent form (#2 most important feature)
+    a_quality = rider_a_feats.get("career_top10_rate", 0) or 0
+    b_quality = rider_b_feats.get("career_top10_rate", 0) or 0
+    a_form = 1.0 / max(rider_a_feats.get("form_90d_avg_rank", 50) or 50, 1)
+    b_form = 1.0 / max(rider_b_feats.get("form_90d_avg_rank", 50) or 50, 1)
+    features["interact_a_quality_x_form"] = a_quality * a_form
+    features["interact_b_quality_x_form"] = b_quality * b_form
+    features["interact_diff_quality_x_form"] = a_quality * a_form - b_quality * b_form
+
+    # Terrain match × form
+    a_terrain = rider_a_feats.get("terrain_same_profile_top10", 0) or 0
+    b_terrain = rider_b_feats.get("terrain_same_profile_top10", 0) or 0
+    features["interact_a_terrain_x_form"] = a_terrain * a_form
+    features["interact_b_terrain_x_form"] = b_terrain * b_form
+    features["interact_diff_terrain_x_form"] = a_terrain * a_form - b_terrain * b_form
+
+    # Climbing specialist × mountain performance
+    a_climber = rider_a_feats.get("spec_climber", 0) or 0
+    b_climber = rider_b_feats.get("spec_climber", 0) or 0
+    a_mt = rider_a_feats.get("mountain_avg_rank", 50) or 50
+    b_mt = rider_b_feats.get("mountain_avg_rank", 50) or 50
+    a_mt_inv = 1.0 / max(a_mt, 1)
+    b_mt_inv = 1.0 / max(b_mt, 1)
+    features["interact_a_climber_x_mountain"] = a_climber * a_mt_inv * profile
+    features["interact_b_climber_x_mountain"] = b_climber * b_mt_inv * profile
+    features["interact_diff_climber_x_mountain"] = (
+        a_climber * a_mt_inv - b_climber * b_mt_inv
+    ) * profile
+
     return features
 
 

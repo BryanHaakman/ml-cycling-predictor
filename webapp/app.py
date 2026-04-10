@@ -694,8 +694,9 @@ SCRIPTS = {
     "train": {
         "label": "Train Models",
         "description": "Full training pipeline (WT-only, ~15 min)",
-        "cmd": ["caffeinate", "-s", _VENV_PYTHON, "-u",
-                os.path.join(_REPO_ROOT, "scripts", "train.py"), "--wt-only"],
+        "cmd": (["caffeinate", "-s"] if sys.platform == "darwin" else []) + [
+            _VENV_PYTHON, "-u", os.path.join(_REPO_ROOT, "scripts", "train.py"), "--wt-only"
+        ],
     },
 }
 
