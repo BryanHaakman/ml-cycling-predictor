@@ -142,7 +142,6 @@ class PredictionResult:
     kelly_a: Optional[KellyResult]
     kelly_b: Optional[KellyResult]
     model_used: str
-    feature_importances: Optional[dict]  # top contributing features
 
 
 class Predictor:
@@ -238,7 +237,6 @@ class Predictor:
             kelly_a=kelly_a,
             kelly_b=kelly_b,
             model_used=self.model_name,
-            feature_importances=None,
         )
 
     def predict_manual(
@@ -300,5 +298,4 @@ class Predictor:
             kelly_a=kelly_a,
             kelly_b=kelly_b,
             model_used=self.model_name,
-            feature_importances=None,
         )
