@@ -94,14 +94,15 @@ From `decision_log.md` — do not change without a logged experiment:
 
 - **Training data:** World Tour only (1.UWT, 2.UWT), all years 2018–2025
 - **Pair generation:** max_rank=50, 200 pairs/stage (~255K WT pairs)
-- **Features:** ~295 (20 race + 78×2 rider absolute + 78 rider diff + startlist-relative + H2H + interaction + course-type + one-day form)
+- **Features:** 424 columns (20 race + rider absolute/diff/interaction + startlist-relative + H2H + course-type + one-day form)
 - **Split:** Stratified stage split (default `--split stratified`; time-based available via `--split time`)
-- **Best model:** CalibratedXGBoost — ~69.8% accuracy, ~0.773 ROC-AUC
-- **Training time:** ~12 minutes (with pre-computed feature cache)
+- **Best model:** CalibratedXGBoost — ~69.6% accuracy, ~0.769 ROC-AUC
+- **Training time:** ~84 min first run (27 min feature matrix + 12 min RF + 9 min XGBoost); incremental runs faster as cache is warm
 - **Feature cache:** `data/rider_features_cache.parquet` + `data/race_features_cache.parquet`
 - **NN skipped by default** (use `--nn` flag to include; adds ~1 min, no accuracy gain)
+- **Pair sampling seed:** default `seed=42` in `build_pairs_sampled` — training is now reproducible
 
-Top features by importance: `race_profile_score`, `diff_field_rank_quality`, `interact_diff_quality_x_form`, `interact_diff_tt_x_itt`, `diff_course_mountain_avg_rank`.
+Top features by importance (2026-04-10 run): `diff_career_top10_rate` (0.148), `diff_field_strength_ratio` (0.030), `diff_form_180d_top10` (0.025), `interact_diff_sprint_x_flat` (0.018), `diff_terrain_same_profile_top10` (0.015).
 
 ---
 

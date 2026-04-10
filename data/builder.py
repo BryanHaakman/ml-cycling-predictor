@@ -87,6 +87,7 @@ def build_pairs_sampled(
     max_rank: int = MAX_RANK_CUTOFF,
     pairs_per_stage: int = 200,
     wt_only: bool = False,
+    seed: int = 42,
 ) -> pd.DataFrame:
     """
     Like build_pairs but samples a fixed number of pairs per stage
@@ -95,6 +96,7 @@ def build_pairs_sampled(
     If wt_only=True, only include stages from World Tour races
     (uci_tour IN ('1.UWT', '2.UWT')).
     """
+    random.seed(seed)
     conn = get_db(db_path)
 
     if wt_only:

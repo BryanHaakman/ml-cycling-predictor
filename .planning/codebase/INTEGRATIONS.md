@@ -14,7 +14,7 @@ The project integrates with three external data sources: ProCyclingStats for cyc
   - Auth: None — public website, no API key
   - Rate limit: self-imposed 0.5 s delay between requests (`REQUEST_DELAY = 0.5` in `data/scraper.py`)
   - Retry logic: up to 3 retries with exponential backoff on HTTP 429/500/502/503 and Cloudflare errors
-  - Timeout: 60 s per request with `SIGALRM` watchdog (`data/scraper.py` `_pcs_fetch`)
+  - Timeout: 60 s per request via `ThreadPoolExecutor.future.result(timeout=60)` in `_pcs_fetch` (`data/scraper.py`) — cross-platform
 
 **Weather:**
 - Open-Meteo Archive API (`https://archive-api.open-meteo.com/v1/archive`) — historical daily weather per stage location

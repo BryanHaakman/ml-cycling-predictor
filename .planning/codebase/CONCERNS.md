@@ -28,12 +28,6 @@ The codebase is a well-documented solo ML project that has been thoughtfully ite
 - Impact: If PCS blocks the scraper, the nightly GitHub Actions pipeline fails silently (it commits no new data), and the model becomes stale without any alert being raised. The workflow has no failure notification step.
 - Fix approach: Add a CI failure step that emails/Slacks on scrape failure; monitor `scrape_log` for anomalies; consider caching a complete recent export.
 
-### `SIGALRM` timeout mechanism is non-portable
-- Risk: `data/scraper.py` uses `signal.SIGALRM` and `signal.alarm()` for request timeouts (lines 57–59). `SIGALRM` does not exist on Windows.
-- Files: `data/scraper.py` lines 42–83
-- Impact: Any developer or CI runner on Windows will get `AttributeError: module 'signal' has no attribute 'SIGALRM'` the first time a scrape is triggered. The GitHub Actions workflow runs on `ubuntu-latest` so CI is unaffected, but Windows local development is broken.
-- Fix approach: Replace with `requests` timeout parameter or `concurrent.futures.ThreadPoolExecutor` with a timeout, which is cross-platform.
-
 ---
 
 ## Technical Debt
@@ -78,12 +72,6 @@ The codebase is a well-documented solo ML project that has been thoughtfully ite
 - Issue: The `PredictionResult` dataclass in `models/predict.py` (line 145) has a `feature_importances` field declared but `predict()` and `predict_manual()` always set it to `None` (lines 237, 299).
 - Files: `models/predict.py` lines 135–146, 237, 299
 - Impact: Feature importance is advertised as part of the prediction API but is never populated. Any caller checking `result.feature_importances` will always get `None`. No UI currently uses this, but it represents dead/misleading code.
-
-### `caffeinate` hardcoded into the admin training command
-- Issue: The training command in the admin panel SCRIPTS dict includes `caffeinate -s` as the first argument (line 697 of `webapp/app.py`). `caffeinate` is a macOS-only utility that prevents system sleep.
-- Files: `webapp/app.py` line 697
-- Impact: Running the admin "Train Models" button on Linux or Windows will fail with `FileNotFoundError: [Errno 2] No such file or directory: 'caffeinate'`. The GitHub Actions CI runner is Linux-based, so this is also broken there.
-- Fix approach: Remove `caffeinate` from the command list or make it conditional on `sys.platform == "darwin"`.
 
 ---
 
@@ -174,19 +162,22 @@ Prioritised by impact on reliability and correctness:
 
 3. **Remove `debug=True` and add admin authentication** — the Flask app runs with the Werkzeug debugger and zero auth. At minimum, disable debug mode and add a secret-based gate to `/admin` routes. (`webapp/app.py`)
 
-4. **Fix `caffeinate` in the admin training command** — the "Train Models" button is broken on any non-macOS system. (`webapp/app.py` line 697)
+4. **Add `.gitignore` entries** — prevent accidental commit of `models/trained/`, `data/*.parquet`, `data/cache.db`. Verify current state of `.gitignore`.
 
-5. **Replace `SIGALRM` with cross-platform timeout** — Windows developer environments will crash on first scrape attempt. (`data/scraper.py`)
+6. **Add tests for core pipeline** — Kelly criterion, bet settlement math, and feature extraction have no test coverage. A bug in `kelly_criterion()` would directly cause financial miscalculation. (`tests/`)
 
-6. **Add a seed to pair sampling** — training is non-reproducible without a fixed seed, making it impossible to reproduce a specific model. (`data/builder.py`)
+7. **Invalidate feature cache on re-scrape** — stale cached features silently persist when historical results are corrected. (`features/feature_store.py`, `data/scraper.py`)
 
-7. **Add `.gitignore` entries** — prevent accidental commit of `models/trained/`, `data/*.parquet`, `data/cache.db`. Verify current state of `.gitignore`.
+8. **Add CI failure alerting** — the nightly pipeline has no notification on failure; a broken scraper would be invisible until the next training run. (`.github/workflows/nightly-pipeline.yml`)
 
-8. **Add tests for core pipeline** — Kelly criterion, bet settlement math, and feature extraction have no test coverage. A bug in `kelly_criterion()` would directly cause financial miscalculation. (`tests/`)
+---
 
-9. **Invalidate feature cache on re-scrape** — stale cached features silently persist when historical results are corrected. (`features/feature_store.py`, `data/scraper.py`)
+## Resolved
 
-10. **Add CI failure alerting** — the nightly pipeline has no notification on failure; a broken scraper would be invisible until the next training run. (`.github/workflows/nightly-pipeline.yml`)
+- ~~**`SIGALRM` timeout mechanism**~~ — fixed in `eab46cd`; scraper now uses `concurrent.futures.ThreadPoolExecutor` with `future.result(timeout=60)`, which is cross-platform.
+- ~~**`caffeinate` in admin training command**~~ — fixed in `eab46cd`; `webapp/app.py` line 697 now conditionally includes it only on `sys.platform == "darwin"`.
+- ~~**`build_feature_vector_manual` missing interaction features**~~ — fixed in `eab46cd`; all 8 interaction groups now present in the manual prediction path.
+- ~~**Random pair sampling non-deterministic**~~ — fixed in `260410-lhv`; `build_pairs_sampled` now accepts `seed=42` default and calls `random.seed(seed)` at entry.
 
 ---
 
