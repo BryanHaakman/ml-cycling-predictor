@@ -74,7 +74,7 @@ notebooks/      Analysis and exploration
 ## Betting Logic
 
 - Edge threshold: flag at >5%, act at >8%
-- Bet sizing: quarter Kelly, max 5% bankroll per bet
+- Bet sizing: half Kelly, max 10% bankroll per bet
 - Confidence scaling: stakes reduced proportionally for low-confidence predictions
 - Bet placement is always manual on Pinnacle — no automated execution
 - CLV (closing line value) is the primary model validity signal

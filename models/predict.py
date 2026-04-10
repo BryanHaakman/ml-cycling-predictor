@@ -79,13 +79,13 @@ def kelly_criterion(
         q = 1 - p (probability of losing)
 
     Staking uses half Kelly (recommended) and quarter Kelly (conservative).
-    max_fraction=0.20 means quarter Kelly is capped at 5% of bankroll.
+    max_fraction=0.20 means half Kelly is capped at 10% of bankroll.
     No confidence scaling — raw Kelly for maximum ROI.
 
     Args:
         model_prob: Model's predicted probability (0-1)
         decimal_odds: Bookmaker's decimal odds (e.g. 2.50)
-        max_fraction: Cap on Kelly fraction to limit risk (default 0.20 → 5% max via quarter Kelly)
+        max_fraction: Cap on Kelly fraction to limit risk (default 0.20 → 10% max via half Kelly)
 
     Returns:
         KellyResult with staking advice

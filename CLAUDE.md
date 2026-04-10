@@ -135,7 +135,7 @@ Use MCP for live/upcoming data. Use `cache.db` for historical training data. The
 ## Betting Logic
 
 - **Edge threshold:** flag at >5%, act at >8%
-- **Bet sizing:** quarter Kelly, max 5% bankroll per bet. Confidence scaling applied: low-confidence bets get reduced stakes proportionally (`scale = clamp((prob − 0.5) / 0.2, 0.5, 1.0)`)
+- **Bet sizing:** half Kelly, max 10% bankroll per bet (`max_fraction=0.20` in `kelly_criterion()`). Quarter Kelly shown as conservative alternative. No confidence scaling — raw Kelly for maximum long-run ROI.
 - **Bet placement is always manual on Pinnacle** — no automated execution
 - **CLV (closing line value)** is the primary model validity signal — track on every bet, not just wins
 - Every bet logged to `data/bets.csv`: date, race, stage, matchup, rider_backed, odds_at_bet, stake, result, closing_odds, clv, pnl, notes
