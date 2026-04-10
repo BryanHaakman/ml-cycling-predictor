@@ -31,6 +31,17 @@ app = Flask(__name__)
 _predictor = None
 
 
+def _require_localhost(f):
+    """Restrict a route to localhost-only access."""
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify({"error": "Admin access is restricted to localhost"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
 @app.errorhandler(400)
 @app.errorhandler(404)
 @app.errorhandler(500)
@@ -719,11 +730,13 @@ def _stream_output(proc, q, script_name):
 
 
 @app.route("/admin")
+@_require_localhost
 def admin():
     return render_template("admin.html")
 
 
 @app.route("/api/admin/scripts")
+@_require_localhost
 def admin_scripts():
     """List available scripts and their current status."""
     result = []
@@ -742,6 +755,7 @@ def admin_scripts():
 
 
 @app.route("/api/admin/run/<script_id>", methods=["POST"])
+@_require_localhost
 def admin_run_script(script_id):
     """Start a script. Returns error if already running."""
     if script_id not in SCRIPTS:
@@ -781,6 +795,7 @@ def admin_run_script(script_id):
 
 
 @app.route("/api/admin/stream/<script_id>")
+@_require_localhost
 def admin_stream(script_id):
     """SSE endpoint — streams script output line by line."""
     def generate():
@@ -813,6 +828,7 @@ def admin_stream(script_id):
 
 
 @app.route("/api/admin/stop/<script_id>", methods=["POST"])
+@_require_localhost
 def admin_stop_script(script_id):
     """Stop a running script."""
     with _script_lock:
@@ -835,4 +851,4 @@ def admin_stop_script(script_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    app.run(debug=False, port=5001)
