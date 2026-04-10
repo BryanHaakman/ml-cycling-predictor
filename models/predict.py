@@ -67,7 +67,7 @@ def american_odds_to_decimal(american: int) -> float:
 def kelly_criterion(
     model_prob: float,
     decimal_odds: float,
-    max_fraction: float = 0.25,
+    max_fraction: float = 0.20,
 ) -> KellyResult:
     """
     Calculate Kelly Criterion staking with confidence scaling.
@@ -79,12 +79,13 @@ def kelly_criterion(
         q = 1 - p (probability of losing)
 
     Staking uses half Kelly (recommended) and quarter Kelly (conservative).
+    max_fraction=0.20 means quarter Kelly is capped at 5% of bankroll.
     No confidence scaling — raw Kelly for maximum ROI.
 
     Args:
         model_prob: Model's predicted probability (0-1)
         decimal_odds: Bookmaker's decimal odds (e.g. 2.50)
-        max_fraction: Cap on Kelly fraction to limit risk
+        max_fraction: Cap on Kelly fraction to limit risk (default 0.20 → 5% max via quarter Kelly)
 
     Returns:
         KellyResult with staking advice
