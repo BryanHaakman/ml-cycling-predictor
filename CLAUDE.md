@@ -195,6 +195,5 @@ The app runs on **port 5001** (not 5000 as README states).
 
 ## Known Issues
 
-- **`build_feature_vector_manual` missing interaction features** (`features/pipeline.py`): The manual prediction path omits 4 interaction groups present in training, including `interact_diff_quality_x_form` (the #2 most important feature). Manual race predictions silently use an incomplete feature vector. Fix: extract interaction computation into a shared helper.
-- **`SIGALRM` in scraper** (`data/scraper.py`): Uses `signal.SIGALRM` which doesn't exist on Windows. CI runs on `ubuntu-latest` so unaffected, but Windows local dev is broken.
 - **No auth on Flask admin** (`webapp/app.py`): `/admin` routes expose subprocess execution with no authentication. Only safe while running on localhost with `debug=True` disabled.
+- **Interaction features duplicated in 3 places** (`features/pipeline.py`): `build_feature_vector`, `build_feature_vector_manual`, and `build_feature_matrix` each compute interactions independently. Future interaction changes must be applied in all three places. Refactor: extract into a shared `_compute_interactions()` helper.
