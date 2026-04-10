@@ -164,7 +164,7 @@
             document.getElementById('bankroll-setup').style.display = 'none';
             document.getElementById('dashboard').style.display = 'block';
 
-            const fmt = (v) => `£${v.toFixed(2)}`;
+            const fmt = (v) => `$${v.toFixed(2)} CAD`;
             const pct = (v) => `${(v * 100).toFixed(1)}%`;
             const cls = (v) => v > 0 ? 'positive' : v < 0 ? 'negative' : 'neutral';
 
@@ -250,8 +250,8 @@
                     <td>${formatMatchup(b)}</td>
                     <td>${b.decimal_odds?.toFixed(2) || '—'}</td>
                     <td>${b.edge ? (b.edge * 100).toFixed(1) + '%' : '—'}</td>
-                    <td>£${b.stake?.toFixed(2) || '—'}</td>
-                    <td class="${profitCls}">${b.status !== 'pending' ? '£' + b.profit?.toFixed(2) : '—'}</td>
+                    <td>$${b.stake?.toFixed(2) || '—'} CAD</td>
+                    <td class="${profitCls}">${b.status !== 'pending' ? '$' + b.profit?.toFixed(2) + ' CAD' : '—'}</td>
                     <td><span class="badge ${badgeCls}">${b.status}</span></td>
                     <td>${actions}</td>
                 </tr>`;

@@ -762,8 +762,8 @@
                                     <span class="label">Edge</span>
                                 </div>
                                 <div class="kelly-stat">
-                                    <span class="value ${evClass}">£${k.expected_value.toFixed(3)}</span>
-                                    <span class="label">EV per £1</span>
+                                    <span class="value ${evClass}">$${k.expected_value.toFixed(3)}</span>
+                                    <span class="label">EV per $1 CAD</span>
                                 </div>
                                 <div class="kelly-stat">
                                     <span class="value">${(k.full_kelly * 100).toFixed(1)}%</span>
@@ -807,7 +807,7 @@
                 return;
             }
             const stake = (kellyFrac * bankroll).toFixed(2);
-            if (!confirm(`Log bet: ${selName} @ ${odds.toFixed(2)} — Stake £${stake} (½ Kelly)?`)) return;
+            if (!confirm(`Log bet: ${selName} @ ${odds.toFixed(2)} — Stake $${stake} CAD (½ Kelly)?`)) return;
 
             const riderAUrl = document.getElementById('rider-a-url').value;
             const riderBUrl = document.getElementById('rider-b-url').value;
@@ -831,7 +831,7 @@
             });
             const data = await res.json();
             if (data.error) { alert('Error: ' + data.error); return; }
-            alert(`✅ Bet logged! Bankroll: £${data.bankroll.toFixed(2)}`);
+            alert(`✅ Bet logged! Bankroll: $${data.bankroll.toFixed(2)} CAD`);
         }
 
         // Load stats + saved races
@@ -1156,7 +1156,7 @@
             if (betsToPlace.length === 0) return;
 
             const totalStake = betsToPlace.reduce((sum, b) => sum + b.kelly.half_kelly * bankroll, 0);
-            if (!confirm(`Log ${betsToPlace.length} value bets?\n\nTotal stake: £${totalStake.toFixed(2)} (½ Kelly each)\nCurrent bankroll: £${bankroll.toFixed(2)}`)) return;
+            if (!confirm(`Log ${betsToPlace.length} value bets?\n\nTotal stake: $${totalStake.toFixed(2)} CAD (½ Kelly each)\nCurrent bankroll: $${bankroll.toFixed(2)} CAD`)) return;
 
             btn.disabled = true;
             btn.textContent = '⏳ Logging bets...';
@@ -1195,7 +1195,7 @@
             }
 
             btn.disabled = false;
-            btn.textContent = `✅ ${logged} bet${logged !== 1 ? 's' : ''} logged! Bankroll: £${bankroll.toFixed(2)}`;
+            btn.textContent = `✅ ${logged} bet${logged !== 1 ? 's' : ''} logged! Bankroll: $${bankroll.toFixed(2)} CAD`;
             setTimeout(() => {
                 btn.textContent = `📝 Log All ${betsToPlace.length} Value Bet${betsToPlace.length !== 1 ? 's' : ''}`;
             }, 4000);
