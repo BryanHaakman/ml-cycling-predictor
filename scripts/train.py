@@ -12,7 +12,9 @@ import os
 import sys
 import logging
 import time
+import json
 import argparse
+from datetime import datetime
 
 # Prevent thread deadlock between sklearn and PyTorch on macOS
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -97,6 +99,26 @@ def main():
                             split_mode=args.split)
 
     log.info(f"Training complete ({_elapsed(t3)})")
+
+    # Save training metadata for fine-tuning
+    meta_path = os.path.join("models", "trained", "training_meta.json")
+    conn = get_db()
+    latest_date = conn.execute("""
+        SELECT MAX(s.date) as d FROM stages s
+        JOIN results r ON r.stage_url = s.url WHERE s.date IS NOT NULL
+    """).fetchone()["d"]
+    conn.close()
+
+    meta = {
+        "last_full_train": datetime.now().isoformat(),
+        "last_fine_tune": None,
+        "fine_tune_count": 0,
+        "last_data_date": latest_date,
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    log.info(f"Saved training metadata (data through {latest_date})")
+
     log.info(f"\n✅ Done! Total time: {_elapsed(t0)}")
     log.info(f"Best model: {results['best_model_name']}")
     log.info("Models saved to models/trained/")

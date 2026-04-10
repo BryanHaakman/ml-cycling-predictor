@@ -512,3 +512,95 @@ High-confidence bets (70%+): 82.6% accuracy on 12,492 test pairs.
 Test set now 56,200 pairs (was 40,600) — more robust evaluation.
 
 **Conclusion:** Change kept as new default. Stratified split gives biggest single improvement in the project — every metric improved substantially. The model benefits from learning recent-year patterns while still being evaluated on held-out stages it hasn't seen. Old time-based split preserved via `--split time` flag.
+
+---
+
+## 2026-04-09 — Retrained on updated data (through 2026-04-08)
+
+**Motivation:** Database restored from latest snapshot including results through Itzulia Basque Country Stage 3 (2026-04-08). Retrained all models on the expanded dataset.
+
+**Method:** `python scripts/train.py` — full pipeline: build pairs → compute features → train 4 models (NN skipped). Stratified stage split (80/20).
+
+**Data:** 291,176 H2H pairs from 1,458 stages. 424 features. Train: 233,576 / Test: 57,600.
+
+**Results:**
+
+| Model | Accuracy | ROC-AUC | Log Loss | Brier Score |
+|-------|----------|---------|----------|-------------|
+| CalibratedXGBoost | 0.7013 | 0.7750 | 0.5665 | 0.1931 |
+| XGBoost | 0.6987 | 0.7729 | 0.5683 | 0.1938 |
+| RandomForest | 0.6827 | 0.7527 | 0.5932 | 0.2036 |
+| LogisticRegression | 0.6728 | 0.7389 | 0.5990 | 0.2067 |
+
+Calibration (CalibratedXGBoost):
+- Low conf (50–60%): 55.6% accuracy (n=9,058)
+- Medium conf (60–70%): 65.4% accuracy (n=7,641)
+- High conf (70%+): 82.4% accuracy (n=12,542)
+
+By race type: One-day 67.6%, Stage race 70.7%.
+By course: Flat 71.3%, Hilly 68.9%, Mountain 71.6%.
+
+Top feature: `diff_career_top10_rate` (importance 0.139).
+
+Training time: 18m 18s.
+
+**Conclusion:** Marginal changes from previous run — metrics remain stable with the additional data. CalibratedXGBoost remains the best model. Models saved to `models/trained/`.
+
+---
+
+## 2026-04-10 — Retrain on Itzulia Stage 5 data + Stage 6 predictions
+
+**Hypothesis:** Incorporating latest Itzulia Basque Country results (stages 1–5) should marginally improve predictions for Stage 6, as riders' current form will be reflected in features.
+
+**Method:**
+1. `python scripts/update_races.py` — scraped latest results into cache.db (203,837 results, 5,077 riders)
+2. `python scripts/train.py` — retrained all 5 models on updated data
+3. Used `predict_manual()` with Stage 6 race parameters (135.4km, 3081m elevation, p4 mountain, 6 climbs) for 13 bookmaker match-ups
+
+**Results:**
+Calibration remained well-aligned:
+| Conf Range | Model Avg | Actual | Count |
+|------------|-----------|--------|-------|
+| 50-55% | 52.5% | 51.8% | 4,348 |
+| 55-60% | 57.5% | 56.6% | 3,960 |
+| 60-65% | 62.5% | 62.9% | 3,782 |
+| 65-70% | 67.5% | 68.7% | 3,493 |
+| 70-75% | 72.5% | 72.9% | 3,386 |
+| 75-80% | 77.4% | 78.5% | 2,868 |
+| 80-100% | 87.2% | 88.0% | 6,563 |
+
+Top feature: `diff_career_top10_rate` (0.169).
+
+Stage 6 predictions: 10/13 markets showed positive edge. 3 markets (Martin vs Beloki, Tejada vs Champoussin, Arrieta vs Ruiz) had no value — model agreed with bookmaker pricing.
+
+Largest edges: Gaffuri over Pericas (+25.0%), Fortunato over J.P. Lopez (+22.4%), T.H. Johannessen over Vauquelin (+15.5%).
+
+**Conclusion:** Model retrained successfully. 10 bets placed for Stage 6 totalling £555.91 via half-Kelly staking. Previous Stage 5 bets settled 4W/1L for +£410.60 profit (85.5% ROI).
+
+---
+
+## 2026-04-10 — Implemented incremental fine-tuning (warm-start XGBoost)
+
+**Hypothesis:** Daily full retrains (~15 min) are wasteful when only 1-3 new stages arrive. XGBoost's warm-start can add trees for new data much faster while preserving existing knowledge.
+
+**Method:** Created `scripts/fine_tune.py` with the following design:
+
+- Loads existing `XGBoost.pkl` and warm-starts with `xgb_model` parameter
+- Fine-tune params: `n_estimators=50` (additional trees), `learning_rate=0.01` (10x lower than full train)
+- **Replay buffer**: mixes 3× historical pairs with new pairs to prevent overfitting to small batches
+- **Prefit calibration**: uses `CalibratedClassifierCV(cv="prefit", method="sigmoid")` — Platt scaling is more stable than isotonic on small calibration sets
+- **Minimum stage gate**: requires ≥3 new stages before fine-tuning (configurable)
+- **Backup**: saves previous models before overwriting
+- **Metadata tracking**: `models/trained/training_meta.json` tracks last train date, fine-tune count, and triggers full retrain warning after 7 incremental updates
+
+Also added `since_date` parameter to `build_pairs_sampled()` in `data/builder.py` for date-range filtering.
+
+Key design decisions (from rubber-duck critique):
+1. Calibrated model uses prefit mode (not cv=5 which creates internal clones)
+2. Sigmoid calibration preferred over isotonic for small sample stability
+3. Replay buffer prevents new trees from overfitting to stage-specific residuals
+4. Test set (2025-2026) used only for logging metrics, not as a tuning gate
+
+**Results:** Script created and validated via dry-run. No training metrics yet — will be logged after first real fine-tune.
+
+**Conclusion:** Infrastructure for incremental fine-tuning is in place. Recommended workflow: `fine_tune.py` for daily updates, `train.py` for weekly full retrains or after pipeline changes.
