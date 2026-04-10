@@ -2,8 +2,8 @@ name: Nightly Data Fetch
 
 on:
   schedule:
-    # Runs at midnight UTC every night
-    - cron: '0 0 * * *'
+    # Runs at 21:00 UTC — after all European races finish and PCS results are published
+    - cron: '0 21 * * *'
   workflow_dispatch: # Allow manual triggers
 
 permissions:
