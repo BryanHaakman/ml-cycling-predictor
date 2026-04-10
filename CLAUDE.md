@@ -196,5 +196,5 @@ The app runs on **port 5001** (not 5000 as README states).
 
 ## Known Issues
 
-- **No auth on Flask admin** (`webapp/app.py`): `/admin` routes expose subprocess execution with no authentication. Only safe while running on localhost with `debug=True` disabled.
+- **Admin restricted to localhost** (`webapp/app.py`): `/admin` routes are protected by `_require_localhost` decorator (returns 403 for non-localhost). `debug=False` is set. Still no password auth — do not expose port 5001 externally.
 - **Interaction features duplicated in 3 places** (`features/pipeline.py`): `build_feature_vector`, `build_feature_vector_manual`, and `build_feature_matrix` each compute interactions independently. Future interaction changes must be applied in all three places. Refactor: extract into a shared `_compute_interactions()` helper.
