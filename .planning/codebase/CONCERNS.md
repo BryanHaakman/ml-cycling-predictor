@@ -160,9 +160,9 @@ Prioritised by impact on reliability and correctness:
 
 2. **Extract shared interaction feature logic** — the 60-line interaction computation block is duplicated three times. This is the root cause of the bug above and will cause future divergences. (`features/pipeline.py`)
 
-3. **Remove `debug=True` and add admin authentication** — the Flask app runs with the Werkzeug debugger and zero auth. At minimum, disable debug mode and add a secret-based gate to `/admin` routes. (`webapp/app.py`)
+3. ~~**Remove `debug=True` and add admin authentication**~~ — fixed in `bf5438b`; `debug=False` set, `_require_localhost` decorator applied to all `/admin` and `/api/admin/*` routes.
 
-4. **Add `.gitignore` entries** — prevent accidental commit of `models/trained/`, `data/*.parquet`, `data/cache.db`. Verify current state of `.gitignore`.
+4. ~~**Add `.gitignore` entries**~~ — already present; `models/trained/`, `data/*_cache.parquet`, `data/cache.db` all excluded.
 
 6. **Add tests for core pipeline** — Kelly criterion, bet settlement math, and feature extraction have no test coverage. A bug in `kelly_criterion()` would directly cause financial miscalculation. (`tests/`)
 
@@ -178,6 +178,9 @@ Prioritised by impact on reliability and correctness:
 - ~~**`caffeinate` in admin training command**~~ — fixed in `eab46cd`; `webapp/app.py` line 697 now conditionally includes it only on `sys.platform == "darwin"`.
 - ~~**`build_feature_vector_manual` missing interaction features**~~ — fixed in `eab46cd`; all 8 interaction groups now present in the manual prediction path.
 - ~~**Random pair sampling non-deterministic**~~ — fixed in `260410-lhv`; `build_pairs_sampled` now accepts `seed=42` default and calls `random.seed(seed)` at entry.
+- ~~**`debug=True` and no admin auth**~~ — fixed in `bf5438b`; debug disabled, localhost-only decorator on all admin routes.
+- ~~**`.gitignore` missing entries**~~ — already present; verified `models/trained/`, `data/*_cache.parquet`, `data/cache.db` all excluded.
+- ~~**`PredictionResult.feature_importances` always `None`**~~ — fixed in `207ee0a`; dead field removed from dataclass and both return sites.
 
 ---
 
