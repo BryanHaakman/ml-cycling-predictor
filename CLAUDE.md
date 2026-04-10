@@ -8,6 +8,23 @@ Owner: Bryan Haakman — bryan@haakman.ca
 
 ---
 
+## Keeping This File Current
+
+**Update this file whenever the project changes in a meaningful way.** It should always reflect how the project actually works, not how it worked when the file was written.
+
+Update it when you:
+- Add a new script, module, or component
+- Change the architecture or data flow
+- Update the best model configuration after a training run
+- Add or remove a key convention
+- Resolve a known issue (remove it from the list)
+- Discover a new gotcha worth warning future Claude instances about
+- Change commands, ports, flags, or file paths
+
+Keep entries concise — this file is loaded on every conversation. Prefer updating existing sections over appending new ones.
+
+---
+
 ## ⚠️ MANDATORY: Decision Log
 
 **Every ML experiment, training run, or pipeline change MUST be documented in `decision_log.md`.**
