@@ -337,27 +337,42 @@ class TestFetchCyclingH2hMarkets(unittest.TestCase):
         with patch("data.odds.ODDS_LOG_PATH", tmp_path):
           with patch("data.odds.KEY_CACHE_PATH", "/fake/cache"):
             with patch("data.odds._extract_key_from_bundle", return_value="newkey") as mock_extract:
-              # First call returns original cached key (env absent, cache exists)
-              with patch("os.path.exists", return_value=True):
-                with patch("builtins.open", mock_open(read_data="oldkey\n")):
-                  with patch("requests.get") as mock_get:
-                    # First request (leagues) -> 401
-                    auth_fail_resp = MagicMock()
-                    auth_fail_resp.status_code = 401
-                    auth_fail_resp.json.return_value = {"status": 401, "detail": "No auth"}
+              with patch("requests.get") as mock_get:
+                # First request (leagues) -> 401
+                auth_fail_resp = MagicMock()
+                auth_fail_resp.status_code = 401
+                auth_fail_resp.json.return_value = {"status": 401, "detail": "No auth"}
 
-                    # Second request (leagues after retry) -> 200
-                    leagues_resp = self._make_league_response(self._sample_league())
-                    matchups_resp = self._make_matchups_response([])
-                    markets_resp = self._make_markets_response([])
-                    mock_get.side_effect = [
-                      auth_fail_resp,
-                      leagues_resp,
-                      matchups_resp,
-                      markets_resp,
-                    ]
+                # Second request (leagues after retry) -> 200
+                leagues_resp = self._make_league_response(self._sample_league())
+                matchups_resp = self._make_matchups_response([])
+                markets_resp = self._make_markets_response([])
+                mock_get.side_effect = [
+                  auth_fail_resp,
+                  leagues_resp,
+                  matchups_resp,
+                  markets_resp,
+                ]
 
-                    with patch("data.odds._invalidate_key_cache") as mock_invalidate:
+                # Simulate: first _get_api_key() call returns "oldkey" via env var
+                # After 401, _invalidate_key_cache is called (real), then _get_api_key()
+                # finds no env var and no cache -> calls _extract_key_from_bundle
+                # We patch _get_api_key to return "oldkey" on first call, then
+                # use real logic (which calls _extract_key_from_bundle) on retry
+                call_count = {"n": 0}
+                original_get_api_key = odds_module._get_api_key
+
+                def mock_get_api_key_side_effect():
+                  call_count["n"] += 1
+                  if call_count["n"] == 1:
+                    return "oldkey"
+                  # Second call: no env var, no cache -> extract from bundle
+                  return original_get_api_key()
+
+                with patch("data.odds._get_api_key", side_effect=mock_get_api_key_side_effect):
+                  with patch("data.odds._invalidate_key_cache") as mock_invalidate:
+                    # os.path.exists returns False so _extract_key_from_bundle is called
+                    with patch("os.path.exists", return_value=False):
                       result = fetch_cycling_h2h_markets()
                       mock_invalidate.assert_called_once()
                       mock_extract.assert_called_once()
