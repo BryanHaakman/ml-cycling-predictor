@@ -6,7 +6,7 @@
 <domain>
 ## Phase Boundary
 
-Discover the Pinnacle internal API endpoint via Playwright browser inspection, document it in `docs/pinnacle-api-notes.md`, then implement `data/odds.py` — a client module that fetches today's cycling H2H markets using a session cookie, normalizes odds to decimal, raises `PinnacleAuthError` on auth failure, and appends a JSONL audit entry to `data/odds_log.jsonl` after every fetch (including empty fetches).
+Discover the Pinnacle internal API endpoint via Playwright browser inspection (one-time), document it in `docs/pinnacle-api-notes.md`, then implement `data/odds.py` — a client module that fetches today's cycling H2H markets, normalizes odds to decimal, raises `PinnacleAuthError` on auth failure, and appends a JSONL audit entry to `data/odds_log.jsonl` after every fetch (including empty fetches). The `X-Api-Key` used for auth is extracted dynamically from Pinnacle's frontend JS bundle at runtime (cached between runs, refreshed on auth failure) — no hardcoded key, no required env var.
 
 **The endpoint URL, required headers, sport/market IDs, and response schema are completely unknown before discovery.** No client code is written until `docs/pinnacle-api-notes.md` is reviewed and approved by the user.
 
@@ -16,9 +16,15 @@ Discover the Pinnacle internal API endpoint via Playwright browser inspection, d
 ## Implementation Decisions
 
 ### Endpoint Discovery
-- **D-01:** Claude drives discovery in-session using Playwright MCP tools — no manual browser inspection by the user, no separate discovery script.
-- **D-02:** Discovery starts unauthenticated. If cycling H2H markets require auth to appear, Claude stops and asks the user for `PINNACLE_SESSION_COOKIE` before retrying.
+- **D-01:** Claude drives discovery in-session using Playwright MCP tools — no manual browser inspection by the user, no separate discovery script. Playwright is used **once** during the discovery task only; it is not a runtime dependency.
+- **D-02:** Discovery starts unauthenticated. If cycling H2H markets require auth to appear, Claude stops and asks the user before retrying.
 - **D-03:** After discovery, Claude writes `docs/pinnacle-api-notes.md` (endpoint URL, required headers, sport/market IDs, odds format, full example response) and **stops for user review**. Client code in `data/odds.py` is not written until the user approves the notes.
+
+### API Key Management
+- **D-13:** The `X-Api-Key` is extracted dynamically at runtime by fetching Pinnacle's frontend JS bundle via `requests` and regex-matching the known key pattern. No hardcoded key. No required env var.
+- **D-14:** The extracted key is cached in `data/.pinnacle_key_cache` (a plain text file, gitignored). On each run, the cache is read first; Playwright/JS-bundle extraction is only triggered on cache miss or auth failure.
+- **D-15:** On HTTP 401/403 from the Pinnacle API, invalidate the cache and re-extract from the JS bundle. If re-extraction also fails, raise `PinnacleAuthError` with a message instructing the user to set `PINNACLE_API_KEY` env var as a manual override.
+- **D-16:** `PINNACLE_API_KEY` env var is an optional override — if set, it bypasses JS bundle extraction entirely. Named `PINNACLE_API_KEY` (not `PINNACLE_SESSION_COOKIE`) to accurately reflect the auth mechanism.
 
 ### OddsMarket Dataclass
 - **D-04:** `OddsMarket` is a `dataclass` (consistent with `KellyResult` in `models/predict.py`).
@@ -40,9 +46,9 @@ Discover the Pinnacle internal API endpoint via Playwright browser inspection, d
 - **D-12:** Module-level functions, consistent with the `data/` package conventions (no class-based client). `fetch_cycling_h2h_markets()` is the primary public function.
 
 ### Claude's Discretion
-- Session cookie is read from the `PINNACLE_SESSION_COOKIE` env var (already established convention — never committed).
 - JSONL line structure for the audit log (beyond `markets` and timestamp) — Claude decides based on what Pinnacle's actual response reveals.
 - Request timeout and retry behavior — follow the `data/scraper.py` pattern (60s timeout, exponential backoff on transient failures).
+- JS bundle URL discovery — Claude finds the correct JS asset URL during the Playwright discovery task and records it in `docs/pinnacle-api-notes.md`.
 
 </decisions>
 
@@ -88,7 +94,7 @@ Discover the Pinnacle internal API endpoint via Playwright browser inspection, d
 ## Specific Ideas
 
 - The discovery phase must confirm whether cycling H2H markets exist under Pinnacle's taxonomy before any client code is written — the roadmap identifies this as the highest-risk unknown in the entire milestone.
-- `PinnacleAuthError` message must specify the `PINNACLE_SESSION_COOKIE` env var by name so the user knows exactly what to update.
+- `PinnacleAuthError` message must specify the `PINNACLE_API_KEY` env var by name so the user knows exactly what to set as a manual override.
 
 </specifics>
 
