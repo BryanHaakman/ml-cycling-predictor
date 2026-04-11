@@ -279,10 +279,13 @@ def auto_settle_from_results(db_path: str = DB_PATH) -> int:
     pending = conn.execute(
         "SELECT * FROM bets WHERE status = 'pending'"
     ).fetchall()
+    conn.close()
 
     settled_count = 0
     for bet in pending:
-        # Check if results exist for this stage
+        # Open a fresh connection per iteration so an exception in settle_bet
+        # doesn't leave a closed connection for the next iteration.
+        conn = get_pnl_db(db_path)
         result_a = conn.execute(
             "SELECT rank FROM results WHERE stage_url = ? AND rider_url = ?",
             (bet["stage_url"], bet["rider_a_url"])
@@ -291,6 +294,7 @@ def auto_settle_from_results(db_path: str = DB_PATH) -> int:
             "SELECT rank FROM results WHERE stage_url = ? AND rider_url = ?",
             (bet["stage_url"], bet["rider_b_url"])
         ).fetchone()
+        conn.close()
 
         if not result_a or not result_b:
             continue
@@ -312,10 +316,7 @@ def auto_settle_from_results(db_path: str = DB_PATH) -> int:
         selection_won = (bet["selection"] == "A" and a_ahead) or \
                        (bet["selection"] == "B" and not a_ahead)
 
-        conn.close()
         settle_bet(bet["id"], won=selection_won, db_path=db_path)
-        conn = get_pnl_db(db_path)
         settled_count += 1
 
-    conn.close()
     return settled_count

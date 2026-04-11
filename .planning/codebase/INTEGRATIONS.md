@@ -1,9 +1,9 @@
 # External Integrations
-> Three external services (ProCyclingStats, Open-Meteo, Nominatim) — all keyless, all HTTP-scraped or REST-called directly.
+> One external data source (ProCyclingStats) — keyless, HTTP-scraped via procyclingstats library.
 
 ## Overview
 
-The project integrates with three external data sources: ProCyclingStats for cycling race data (scraped via the `procyclingstats` library and `cloudscraper`), Open-Meteo for historical weather data (free REST API, no key), and Nominatim/OpenStreetMap for geocoding stage cities (free API, no key). No paid APIs, authentication providers, or cloud platforms are used. All data is persisted locally in SQLite.
+The project integrates with one external data source: ProCyclingStats for cycling race data (scraped via the `procyclingstats` library and `cloudscraper`). No paid APIs, authentication providers, or cloud platforms are used. All data is persisted locally in SQLite.
 
 ## APIs & External Services
 
@@ -16,30 +16,16 @@ The project integrates with three external data sources: ProCyclingStats for cyc
   - Retry logic: up to 3 retries with exponential backoff on HTTP 429/500/502/503 and Cloudflare errors
   - Timeout: 60 s per request via `ThreadPoolExecutor.future.result(timeout=60)` in `_pcs_fetch` (`data/scraper.py`) — cross-platform
 
-**Weather:**
-- Open-Meteo Archive API (`https://archive-api.open-meteo.com/v1/archive`) — historical daily weather per stage location
-  - Client: Python stdlib `urllib.request` — no SDK (`scripts/fetch_weather.py`)
-  - Auth: None — free, keyless API
-  - Parameters fetched: `temperature_2m_max`, `temperature_2m_min`, `precipitation_sum`, `windspeed_10m_max`, `relative_humidity_2m_mean`
-  - Rate limit handling: detects HTTP 429, backs off 30/60/90 s (`scripts/fetch_weather.py`)
-  - Data stored: `stage_weather` table in `data/cache.db`
-
-**Geocoding:**
-- Nominatim / OpenStreetMap (`https://nominatim.openstreetmap.org`) — converts race departure city names to lat/lon coordinates
-  - Client: `geopy>=2.4` `Nominatim` class (`scripts/fetch_weather.py`)
-  - Auth: None — free, keyless; user-agent set to `"cycling-predictor-weather"`
-  - Rate limit: 1.1 s sleep between requests to comply with Nominatim's 1 req/sec policy
-  - Data stored: `geocoded_cities` table in `data/cache.db`
 
 ## Data Storage
 
 **Databases:**
 - SQLite (Python stdlib `sqlite3`) — single file `data/cache.db` (gitignored)
   - Schema defined in `data/scraper.py` (`_create_tables`) and `data/pnl.py` (`_create_pnl_tables`)
-  - Tables: `races`, `stages`, `results`, `riders`, `scrape_log`, `geocoded_cities`, `stage_weather`, `bets`, `bankroll_history`, `saved_races`
+  - Tables: `races`, `stages`, `results`, `riders`, `scrape_log`, `bets`, `bankroll_history`, `saved_races`
   - WAL mode enabled; foreign keys enforced
   - Connection: hardcoded path `data/cache.db` via `DB_PATH` constant in `data/scraper.py`
-  - Snapshot: gzip SQL dump committed to git as `data/db_snapshot.sql.gz`
+  - Snapshot: none committed to git (regenerate via `scripts/dump_db.py`)
 
 **File Storage:**
 - Local filesystem only
@@ -95,7 +81,7 @@ The Flask app (`webapp/app.py`) is unauthenticated. The admin panel at `/admin` 
 
 **Incoming:** None
 
-**Outgoing:** None — the app only makes outbound HTTP requests to PCS, Open-Meteo, and Nominatim during data collection scripts; the Flask app itself makes no outbound calls at request time
+**Outgoing:** None — the app only makes outbound HTTP requests to PCS during data collection scripts; the Flask app itself makes no outbound calls at request time
 
 ---
 

@@ -83,11 +83,10 @@ def main():
         date_map[s["url"]] = s["date"]
     conn.close()
 
-    dates = pairs_df["stage_url"].map(date_map)
-    # Align with feature_df (which may have dropped some rows)
-    dates = dates.iloc[:len(feature_df)].reset_index(drop=True)
+    # Align with feature_df by index (surviving rows may not be the first N rows)
+    dates = pairs_df.loc[feature_df.index, "stage_url"].map(date_map).reset_index(drop=True)
 
-    stage_urls = pairs_df["stage_url"].iloc[:len(feature_df)].reset_index(drop=True)
+    stage_urls = pairs_df.loc[feature_df.index, "stage_url"].reset_index(drop=True)
 
     log.info("\n=== Step 3: Training and benchmarking models ===")
     t3 = time.time()

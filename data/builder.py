@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 MAX_RANK_CUTOFF = 50  # Only pair riders who both finished in top N
 
 
-def build_pairs(db_path: str = DB_PATH, max_rank: int = MAX_RANK_CUTOFF) -> pd.DataFrame:
+def build_pairs(db_path: str = DB_PATH, max_rank: int = MAX_RANK_CUTOFF, seed: int = 42) -> pd.DataFrame:
     """
     Build all head-to-head pairs from cached results.
 
@@ -30,6 +30,7 @@ def build_pairs(db_path: str = DB_PATH, max_rank: int = MAX_RANK_CUTOFF) -> pd.D
     Returns DataFrame with columns:
         stage_url, rider_a_url, rider_b_url, label (1 = A finishes ahead)
     """
+    random.seed(seed)
     conn = get_db(db_path)
 
     # Get all stages with results

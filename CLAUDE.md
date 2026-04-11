@@ -93,16 +93,16 @@ Pipeline: **Scrape → Build H2H Pairs → Engineer Features → Train Models �
 From `decision_log.md` — do not change without a logged experiment:
 
 - **Training data:** World Tour only (1.UWT, 2.UWT), all years 2018–2025
-- **Pair generation:** max_rank=50, 200 pairs/stage (~255K WT pairs)
+- **Pair generation:** max_rank=50, 200 pairs/stage (~292K WT pairs)
 - **Features:** 424 columns (20 race + rider absolute/diff/interaction + startlist-relative + H2H + course-type + one-day form)
 - **Split:** Stratified stage split (default `--split stratified`; time-based available via `--split time`)
-- **Best model:** CalibratedXGBoost — ~69.6% accuracy, ~0.769 ROC-AUC
-- **Training time:** ~84 min first run (27 min feature matrix + 12 min RF + 9 min XGBoost); incremental runs faster as cache is warm
+- **Best model:** CalibratedXGBoost — 69.6% accuracy, 0.770 ROC-AUC (post-audit-fix run 2026-04-10)
+- **Training time:** ~79 min first run (22 min feature matrix + 57 min models); incremental runs faster as cache is warm
 - **Feature cache:** `data/rider_features_cache.parquet` + `data/race_features_cache.parquet`
 - **NN skipped by default** (use `--nn` flag to include; adds ~1 min, no accuracy gain)
 - **Pair sampling seed:** default `seed=42` in `build_pairs_sampled` — training is now reproducible
 
-Top features by importance (2026-04-10 run): `diff_career_top10_rate` (0.148), `diff_field_strength_ratio` (0.030), `diff_form_180d_top10` (0.025), `interact_diff_sprint_x_flat` (0.018), `diff_terrain_same_profile_top10` (0.015).
+Top features by importance (2026-04-10 run): `diff_career_top10_rate` (0.134), `diff_form_180d_top10` (0.021), `interact_diff_sprint_x_flat` (0.018), `diff_field_rank_quality` (0.014), `interact_diff_terrain_x_form` (0.013).
 
 ---
 

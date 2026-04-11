@@ -619,7 +619,6 @@ def scrape_since_last(db_path: str = DB_PATH, tiers: list[str] = None):
                 ).fetchall()]
                 for surl in stage_urls:
                     conn.execute("DELETE FROM results WHERE stage_url = ?", (surl,))
-                    conn.execute("DELETE FROM stage_weather WHERE stage_url = ?", (surl,))
                 conn.execute("DELETE FROM stages WHERE race_url = ?", (race_url,))
                 conn.execute("DELETE FROM races WHERE url = ?", (race_url,))
                 conn.execute(

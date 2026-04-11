@@ -45,22 +45,16 @@ The codebase is a well-documented solo ML project that has been thoughtfully ite
 - Fix approach: Extend `build_feature_vector_manual` to include all interaction groups, or refactor into the shared helper noted above.
 
 ### Startlist-relative features are absent from `build_feature_vector` (live prediction)
-- Issue: `build_feature_vector` in `features/pipeline.py` (lines 71–222) computes startlist features by fetching all riders in the stage from the DB (lines 126–155). This only works when the stage has results stored. For an upcoming race, the startlist is empty, so `field_size=0` and all percentiles default. The manual path in `build_feature_vector_manual` doesn't attempt startlist features at all.
-- Files: `features/pipeline.py` lines 125–155, 225–347
-- Impact: `diff_field_rank_quality` is ranked #3 in feature importance in the current production model (0.0162). Live predictions will always receive 0 for this feature, creating a systematic bias.
+- Issue: `build_feature_vector_manual` in `features/pipeline.py` doesn't compute startlist features at all. Neutral defaults are now used (0.5 percentile, 1.0 ratio) but real values require a startlist.
+- Files: `features/pipeline.py` — `build_feature_vector_manual`
+- Impact: `diff_field_rank_quality` is ranked #3 in feature importance (0.0162). Live predictions now receive neutral values (not 0), which is less biased but still imprecise.
 - Fix approach: Accept an optional `startlist` parameter (list of rider URLs) to `build_feature_vector_manual` so the web UI can pass a startlist for upcoming races.
-
-### Random pair sampling introduces non-deterministic training
-- Issue: `build_pairs_sampled` in `data/builder.py` uses `random.random()` and `random.randint()` without a fixed seed (lines 147–155, 161).
-- Files: `data/builder.py` lines 139–175
-- Impact: Two training runs on the same data will produce different datasets and therefore different model weights. The decision log acknowledges "run-to-run variance from random pair sampling is ±0.003 AUC". This makes reproducing a specific trained model impossible without the exact random state.
-- Fix approach: Add a `seed` parameter (defaulting to 42) and call `random.seed(seed)` at the start of `build_pairs_sampled`.
 
 ### SQLite used for everything including concurrent multi-user scenarios
 - Issue: All data (scraped results, P&L, bets) lives in a single SQLite file at `data/cache.db`. The `get_db()` function creates a new connection per call with WAL mode, but the web app opens connections per-request without connection pooling.
 - Files: `data/scraper.py` lines 90–96; `data/pnl.py` lines 72–75; `webapp/app.py` throughout
-- Impact: Write contention during a scrape (which holds many write transactions) concurrent with a web request will cause `SQLITE_BUSY` errors. The `auto_settle_from_results` function opens and closes the connection repeatedly inside a loop (lines 314–317), which is particularly fragile.
-- Fix approach: Use a single connection per request with context management; consolidate bet settlement to use a single transaction.
+- Impact: Write contention during a scrape (which holds many write transactions) concurrent with a web request will cause `SQLITE_BUSY` errors.
+- Fix approach: Use a single connection per request with context management. Note: `auto_settle_from_results` connection fragility is now fixed (fresh connection per iteration).
 
 ### `db_snapshot.sql.gz` committed to git as a binary blob
 - Issue: The nightly pipeline commits `data/db_snapshot.sql.gz` to the main branch. The current workflow compresses the SQLite binary directly (not SQL text), meaning git cannot diff it.
@@ -177,10 +171,15 @@ Prioritised by impact on reliability and correctness:
 - ~~**`SIGALRM` timeout mechanism**~~ — fixed in `eab46cd`; scraper now uses `concurrent.futures.ThreadPoolExecutor` with `future.result(timeout=60)`, which is cross-platform.
 - ~~**`caffeinate` in admin training command**~~ — fixed in `eab46cd`; `webapp/app.py` line 697 now conditionally includes it only on `sys.platform == "darwin"`.
 - ~~**`build_feature_vector_manual` missing interaction features**~~ — fixed in `eab46cd`; all 8 interaction groups now present in the manual prediction path.
-- ~~**Random pair sampling non-deterministic**~~ — fixed in `260410-lhv`; `build_pairs_sampled` now accepts `seed=42` default and calls `random.seed(seed)` at entry.
+- ~~**Random pair sampling non-deterministic**~~ — fixed in `260410-lhv` + audit-fixes-260410; `build_pairs_sampled` and `build_pairs` now both accept `seed=42` default and call `random.seed(seed)` at entry.
 - ~~**`debug=True` and no admin auth**~~ — fixed in `bf5438b`; debug disabled, localhost-only decorator on all admin routes.
 - ~~**`.gitignore` missing entries**~~ — already present; verified `models/trained/`, `data/*_cache.parquet`, `data/cache.db` all excluded.
 - ~~**`PredictionResult.feature_importances` always `None`**~~ — fixed in `207ee0a`; dead field removed from dataclass and both return sites.
+- ~~**`race_tier` always 2 in live predictions**~~ — fixed in audit-fixes-260410; `build_feature_vector_manual` now passes `uci_tour` from `race_params` into the synthetic `stage_row`; web UI exposes a Race Tier dropdown on both manual and batch prediction forms.
+- ~~**Train/test date alignment mismatched when pairs are skipped**~~ — fixed in audit-fixes-260410; `build_feature_matrix` now sets its output DataFrame index to surviving `pairs_df` row indices; `train.py` aligns via `pairs_df.loc[feature_df.index]` instead of truncating by length.
+- ~~**Startlist percentiles computed over cache-hit subset but `field_size` uses full count**~~ — fixed in audit-fixes-260410; `field_size` now equals `len(quality_vals)` (cache-hit riders), consistent with the percentile computation.
+- ~~**`auto_settle_from_results` leaves closed connection on exception path**~~ — fixed in audit-fixes-260410; pending bets fetched once then connection closed; each loop iteration opens a fresh connection before querying results, then closes before calling `settle_bet`.
+- ~~**Startlist feature defaults were 0.0 instead of neutral values**~~ — fixed in audit-fixes-260410; `build_feature_vector_manual` now sets `field_rank_*` to 0.5 (median) and `field_strength_ratio` to 1.0 (equal quality) when no startlist is available.
 
 ---
 

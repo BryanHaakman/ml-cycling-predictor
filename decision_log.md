@@ -347,7 +347,7 @@ No weather feature appeared in the top 20 by XGBoost importance.
 3. The interactions we designed (rain×weight, wind×weight, heat×experience) have weak theoretical basis — real-world weather effects are complex and not well-captured by simple products
 4. ProCyclingStats already provides `avg_temperature` for 49% of stages, which the model already uses
 
-**Decision:** Weather features reverted from training pipeline. The `scripts/fetch_weather.py` script and DB tables (`geocoded_cities`, `stage_weather`) are kept for future use. Weather data is a fundamentally weak signal for H2H prediction because it's a race-level variable, not a rider-level variable.
+**Decision:** Weather features reverted from training pipeline. `scripts/fetch_weather.py`, `scripts/feature_selection.py`, and DB tables (`geocoded_cities`, `stage_weather`) fully removed (2026-04-10). Weather data is a fundamentally weak signal for H2H prediction because it's a race-level variable, not a rider-level variable.
 
 ---
 
@@ -512,3 +512,45 @@ High-confidence bets (70%+): 82.6% accuracy on 12,492 test pairs.
 Test set now 56,200 pairs (was 40,600) — more robust evaluation.
 
 **Conclusion:** Change kept as new default. Stratified split gives biggest single improvement in the project — every metric improved substantially. The model benefits from learning recent-year patterns while still being evaluated on held-out stages it hasn't seen. Old time-based split preserved via `--split time` flag.
+
+---
+
+## 2026-04-10 — Core pipeline bug fixes (audit-fixes-260410)
+
+**Hypothesis:** Post-scan audit identified 2 critical bugs and 3 high-priority bugs silently affecting every live prediction and every training run. Fixing them will correct systematic biases without requiring new features.
+
+**Changes made (no training run yet — to be followed by retraining):**
+
+1. **C1 — `race_tier` always 2 in live predictions** (`features/pipeline.py`): `build_feature_vector_manual` now passes `uci_tour` from `race_params` into the synthetic `stage_row`. The web UI exposes a "Race Tier" dropdown on both manual and batch forms. Previously, live predictions always received `race_tier=2` regardless of actual race category.
+
+2. **C2 — Train/test date alignment bug** (`features/pipeline.py`, `scripts/train.py`): `build_feature_matrix` now preserves original `pairs_df` row indices in the output DataFrame (via `surviving_indices`). `train.py` now aligns dates/stage_urls via `pairs_df.loc[feature_df.index]` instead of `iloc[:len(feature_df)]` truncation. When skipped pairs were scattered throughout (not just at the tail), the old code assigned wrong dates and therefore wrong train/test buckets to surviving pairs. **This may shift accuracy numbers** — the stratified split may have been partially incorrect in prior runs.
+
+3. **H1 — `build_pairs()` non-sampled path had no seed** (`data/builder.py`): Added `seed=42` default and `random.seed(seed)` call, matching the fix already applied to `build_pairs_sampled`.
+
+4. **H2 — `field_size` used full rider count, not cache-hit subset** (`features/pipeline.py`): `field_size` now equals `len(quality_vals)` (riders present in the feature cache), consistent with the percentile computation. Previously `field_size` was the full DB count while percentiles were computed over the cache subset — these were inconsistent.
+
+5. **H3 — `auto_settle_from_results` connection fragility** (`data/pnl.py`): Restructured to open a fresh connection per loop iteration. An exception in `settle_bet` no longer leaves a closed connection for the next bet.
+
+6. **H4 — Startlist feature defaults were `0.0`** (`features/pipeline.py`): `build_feature_vector_manual` now sets `field_rank_quality/form` to `0.5` (median) and `field_strength_ratio` to `1.0` (equal field quality). Previous `0.0` defaults systematically pulled live predictions toward incorrect values.
+
+**Method:** Code fixes only, then retrained with `python scripts/train.py`. `pytest tests/ -v` → 14/14 passing.
+
+**Results (post-fix training run, 2026-04-10):**
+| Model | Accuracy | ROC-AUC | Log Loss | Brier Score |
+|-------|----------|---------|----------|-------------|
+| CalibratedXGBoost | **0.6963** | **0.7702** | 0.5713 | 0.1950 |
+| XGBoost | 0.6946 | 0.7681 | 0.5728 | 0.1957 |
+| RandomForest | 0.6808 | 0.7494 | 0.5958 | 0.2048 |
+| LogisticRegression | 0.6715 | 0.7362 | 0.6023 | 0.2078 |
+
+291,576 pairs from 1,461 stages. Train: 233,776 / Test: 57,800. 424 features. Total time: 79m 0s (22m feature matrix + 57m models).
+
+Top features by XGBoost importance: `diff_career_top10_rate` (0.134), `diff_form_180d_top10` (0.021), `interact_diff_sprint_x_flat` (0.018), `diff_field_rank_quality` (0.014), `interact_diff_terrain_x_form` (0.013).
+
+Calibration breakdown (CalibratedXGBoost):
+- Low conf (50-60%): 55.6% accuracy (n=8,116)
+- Medium conf (60-70%): 66.1% accuracy (n=7,690)
+- High conf (70%+): 82.0% accuracy (n=12,612)
+- One-day races: 66.8% | Stage races: 70.2%
+
+**Conclusion:** Accuracy is flat vs. pre-fix baseline (69.6% / 0.769 → 69.6% / 0.770) — well within run-to-run variance (±0.003 AUC). The C2 index alignment fix did not materially shift train/test splits, suggesting pair skips were rare enough not to cause systematic misassignment in prior runs. H4 startlist defaults fix improves live prediction calibration without measurable training impact. All fixes confirmed safe — new production baseline is 69.6% / 0.770.

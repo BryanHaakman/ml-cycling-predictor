@@ -273,6 +273,7 @@ def build_feature_vector_manual(
         "startlist_quality_score": race_params.get("startlist_quality_score"),
         "num_climbs": race_params.get("num_climbs") or 0,
         "climbs_json": race_params.get("climbs_json") or "[]",
+        "uci_tour": race_params.get("uci_tour") or "",
     }
 
     features = {}
@@ -379,6 +380,18 @@ def build_feature_vector_manual(
     features["interact_diff_climber_x_mountain"] = (
         a_climber * a_mt_inv - b_climber * b_mt_inv
     ) * profile
+
+    # Startlist-relative features: use neutral values since no startlist is available
+    # (training sees real percentiles; 0.5 = median, 1.0 = equal field quality)
+    features["a_field_rank_quality"] = 0.5
+    features["b_field_rank_quality"] = 0.5
+    features["diff_field_rank_quality"] = 0.0
+    features["a_field_rank_form"] = 0.5
+    features["b_field_rank_form"] = 0.5
+    features["diff_field_rank_form"] = 0.0
+    features["a_field_strength_ratio"] = 1.0
+    features["b_field_strength_ratio"] = 1.0
+    features["diff_field_strength_ratio"] = 0.0
 
     return features
 
@@ -509,7 +522,7 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
         if not quality_vals:
             continue
 
-        field_size = len(riders_in_stage)
+        field_size = len(quality_vals)  # only riders present in cache, same subset used for percentiles
         q_values = list(quality_vals.values())
         avg_quality = np.mean(q_values) if q_values else 0.0
 
@@ -539,12 +552,13 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
              f"{len(startlist_rider_feats)} rider-stage entries")
 
     rows = []
+    surviving_indices = []
     skipped = 0
     cache_hits = 0
     cache_misses = 0
     total = len(pairs_df)
 
-    for i, (_, pair) in enumerate(tqdm(pairs_df.iterrows(), total=total, desc="Building feature matrix")):
+    for i, (pair_idx, pair) in enumerate(tqdm(pairs_df.iterrows(), total=total, desc="Building feature matrix")):
         stage_url = pair["stage_url"]
         rider_a_url = pair["rider_a_url"]
         rider_b_url = pair["rider_b_url"]
@@ -683,6 +697,7 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
         row = [features.get(name, 0.0) for name in feature_names]
         row.append(pair["label"])
         rows.append(row)
+        surviving_indices.append(pair_idx)
 
         if (i + 1) % 5000 == 0:
             log.info(f"  Progress: {i+1}/{total} pairs, {len(rows)} kept, {skipped} skipped")
@@ -693,7 +708,7 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
         log.info(f"Cache stats: {cache_hits} hits, {cache_misses} misses")
 
     columns = feature_names + ["label"]
-    df = pd.DataFrame(rows, columns=columns)
+    df = pd.DataFrame(rows, columns=columns, index=surviving_indices)
 
     # Domain-aware fillna: rank features default to 50 (median), others to 0
     rank_keywords = ("avg_rank", "median_rank", "best_rank", "ranking")

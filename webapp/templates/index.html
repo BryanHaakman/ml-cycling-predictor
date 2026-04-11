@@ -333,6 +333,19 @@
                             <label>Number of Climbs</label>
                             <input type="number" id="manual-climbs" placeholder="e.g. 5" step="1" min="0">
                         </div>
+                        <div class="form-group">
+                            <label>Race Tier (UCI Category)</label>
+                            <select id="manual-uci-tour">
+                                <option value="">Unknown / Other</option>
+                                <option value="1.UWT">1.UWT — World Tour (1-day)</option>
+                                <option value="2.UWT">2.UWT — World Tour (stage)</option>
+                                <option value="WC">WC — World Championships</option>
+                                <option value="1.Pro">1.Pro — ProSeries (1-day)</option>
+                                <option value="2.Pro">2.Pro — ProSeries (stage)</option>
+                                <option value="1.1">1.1 — Class 1</option>
+                                <option value="2.1">2.1 — Class 1 (stage)</option>
+                            </select>
+                        </div>
                         <div class="form-group full">
                             <label>Race Base URL (optional — for same-race history)</label>
                             <input type="text" id="manual-race-url" placeholder="e.g. race/tour-de-france">
@@ -439,6 +452,19 @@
                 <div class="form-group">
                     <label>Number of Climbs</label>
                     <input type="number" id="batch-climbs" placeholder="e.g. 5" step="1" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Race Tier (UCI Category)</label>
+                    <select id="batch-uci-tour">
+                        <option value="">Unknown / Other</option>
+                        <option value="1.UWT">1.UWT — World Tour (1-day)</option>
+                        <option value="2.UWT">2.UWT — World Tour (stage)</option>
+                        <option value="WC">WC — World Championships</option>
+                        <option value="1.Pro">1.Pro — ProSeries (1-day)</option>
+                        <option value="2.Pro">2.Pro — ProSeries (stage)</option>
+                        <option value="1.1">1.1 — Class 1</option>
+                        <option value="2.1">2.1 — Class 1 (stage)</option>
+                    </select>
                 </div>
                 <div class="form-group full">
                     <label>Race Base URL (optional)</label>
@@ -701,6 +727,7 @@
                     race_date: document.getElementById('manual-race-date').value || new Date().toISOString().split('T')[0],
                     race_base_url: document.getElementById('manual-race-url').value || null,
                     num_climbs: parseInt(document.getElementById('manual-climbs').value) || 0,
+                    uci_tour: document.getElementById('manual-uci-tour').value || '',
                 };
             }
 
@@ -977,6 +1004,7 @@
                 race_date: document.getElementById('batch-race-date').value || new Date().toISOString().split('T')[0],
                 race_base_url: document.getElementById('batch-race-url').value || null,
                 num_climbs: parseInt(document.getElementById('batch-climbs').value) || 0,
+                uci_tour: document.getElementById('batch-uci-tour').value || '',
             };
         }
 
