@@ -27,28 +27,33 @@ An autonomous once-daily pipeline that replaces the current fully manual betting
 
 ## Architecture
 
-Everything runs on the existing Hostinger VPS alongside n8n.
+Everything runs on the Hostinger VPS (Ubuntu 24.04, 8 GB RAM, 2 CPU). n8n runs in its existing Docker container and is not involved in the pipeline. Python runs natively on the host.
 
 ```
-Hostinger VPS
-├── n8n (existing)
-│   ├── Cron: 17:00 local + 22:00 local
-│   ├── HTTP node → POST /api/pipeline/run on Flask app (trigger only)
-│   └── Email node → deliver report_html from Flask response to inbox
+Hostinger VPS (148.230.81.207)
+├── n8n Docker container (existing, untouched)
 │
-└── PaceIQ Flask app (deployed here)
-    ├── All existing routes unchanged
-    ├── POST /api/pipeline/run — pipeline trigger endpoint
-    │   ├── Fetches odds from Pinnacle internal API (session cookie)
-    │   ├── Resolves names → PCS URLs
-    │   ├── Fetches stage context via MCP server
-    │   ├── Runs model predictions on all matchups
-    │   ├── Runs qualitative research per race
-    │   └── Returns {"status": "ok", "report_html": "..."}
-    └── Bet logging UI (existing, enhanced)
+├── PaceIQ Flask app (systemd service, port 5001)
+│   ├── All existing routes unchanged
+│   └── Bet logging UI (existing, enhanced with prefill)
+│
+└── Intelligence pipeline (standalone script, not Flask-dependent)
+    └── scripts/intelligence_pipeline.py
+        ├── Fetches odds from Pinnacle internal API
+        ├── Resolves names → PCS URLs
+        ├── Fetches stage context via MCP server
+        ├── Runs model predictions on all matchups
+        ├── Runs qualitative research per matchup (Claude API)
+        ├── Generates HTML report
+        └── Sends email directly (SMTP)
+
+Trigger flow:
+  GitHub Actions nightly pipeline (21:00 UTC, ~20 min runtime)
+    └── on success → curl webhook → VPS cron/systemd timer fires
+                     OR fallback: Linux cron at 22:00 UTC
 ```
 
-n8n's only job is to trigger the pipeline on schedule and deliver the email. All data fetching and intelligence logic lives in Python.
+n8n is not used in this pipeline. Python handles everything end-to-end including email delivery.
 
 n8n orchestrates scheduling and delivery. Flask app does all ML and intelligence work. Clean separation of concerns.
 
@@ -245,42 +250,44 @@ New route: `POST /api/pipeline/run`
 
 ### 9. Trigger Design
 
-**Primary: GitHub Actions webhook → n8n → Flask**
+**Primary: GitHub Actions → curl → VPS pipeline script**
 
-The nightly GitHub Actions pipeline runs at 21:00 UTC and completes ~21:20 UTC. A final step in `.github/workflows/nightly-pipeline.yml` hits an n8n webhook URL once the pipeline succeeds. n8n receives the webhook and calls the Flask pipeline endpoint. Report runs on fresh data every night, automatically.
+The nightly GitHub Actions pipeline runs at 21:00 UTC and completes ~21:20 UTC. A final step hits a lightweight webhook endpoint on the VPS to trigger the intelligence pipeline directly.
 
 ```yaml
 # Added to end of nightly-pipeline.yml (after DB snapshot commit)
 - name: Trigger intelligence pipeline
   if: success()
-  run: curl -s -X POST "${{ secrets.N8N_PIPELINE_WEBHOOK_URL }}"
+  run: curl -s -X POST "http://148.230.81.207:5001/api/pipeline/run" -H "X-Pipeline-Secret: ${{ secrets.PIPELINE_SECRET }}"
 ```
 
-**n8n workflow steps:**
-1. Webhook trigger (receives POST from GitHub Actions)
-2. HTTP POST → `http://localhost:5001/api/pipeline/run`
-3. If response OK → Email node → send `report_html` to inbox
-4. If response error → Email node → send error alert
+The Flask app receives the trigger, runs the pipeline, sends the email. No n8n involved.
 
-**Fallback: 22:00 UTC cron** — if webhook integration is unreliable, switch n8n trigger to a simple cron at 22:00 UTC (safe buffer after nightly pipeline finishes).
+**Fallback: Linux cron at 22:00 UTC** — if the webhook approach has issues, a simple crontab entry on the VPS runs the script directly:
 
-Pinnacle session cookie stored as environment variable on VPS, accessed by Flask app directly. n8n webhook URL stored as a GitHub Actions secret.
+```bash
+0 22 * * * /home/paceiq/venv/bin/python /home/paceiq/ml-cycling-predictor/scripts/intelligence_pipeline.py >> /var/log/paceiq.log 2>&1
+```
+
+`PIPELINE_SECRET` stored as GitHub Actions secret. Same secret checked by Flask to authenticate the trigger.
 
 ---
 
 ## Deployment
 
-**Target:** Hostinger VPS alongside existing n8n.
+**Target:** Hostinger VPS — Ubuntu 24.04, 8 GB RAM, 100 GB disk, Python native on host.
 
 **Steps (implementation phase):**
-1. Install Python 3.11 + pip on VPS (if not present)
-2. Clone repo, install requirements
-3. Set environment variables: `ANTHROPIC_API_KEY`, `PINNACLE_SESSION_COOKIE`, `BANKROLL`
-4. Run Flask app as a systemd service on port 5001
-5. Configure n8n workflows (cron + HTTP + email)
-6. Test with a single manual trigger before enabling schedule
+1. SSH into VPS (`ssh root@148.230.81.207`)
+2. Verify Python 3.11 available (`python3 --version`) — install if not
+3. Clone repo, create virtualenv, install requirements
+4. Copy trained model artifacts from local machine to VPS (`scp models/trained/ root@148.230.81.207:...`)
+5. Set environment variables in `/etc/environment`: `ANTHROPIC_API_KEY`, `PINNACLE_SESSION_COOKIE`, `PIPELINE_SECRET`, `REPORT_EMAIL`, `SMTP_*`
+6. Run Flask app as a systemd service on port 5001
+7. Add GitHub Actions secret `PIPELINE_SECRET`
+8. Test with a manual `curl` trigger before enabling the GH Actions step
 
-**No Docker required** — keep it simple for a personal tool.
+**No Docker required** — n8n stays in its container, PaceIQ runs natively alongside it.
 
 ---
 
