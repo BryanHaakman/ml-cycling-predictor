@@ -40,7 +40,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A name that scores below the auto-accept threshold (90) returns None rather than a wrong match; the pair is flagged as unresolved rather than silently mis-mapped
   3. Accepted mappings are written to data/name_mappings.json and re-used on the next resolver instantiation without re-querying cache.db or re-running fuzzy logic
   4. name_mappings.json schema is validated on load (each value matches rider/[a-z0-9-]+); invalid entries are logged and skipped rather than crashing the resolver
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [x] 02-01-PLAN.md — TDD: NameResolver with cache/exact/normalized stages + ResolveResult dataclass + persistent JSON cache
+- [x] 02-02-PLAN.md — TDD: Fuzzy matching stage + unresolved contract verification
 
 ### Phase 3: Stage Context Fetcher
 **Goal**: A stage context fetcher that takes a Pinnacle race name, finds the matching PCS stage URL, and returns a fully-populated StageContext dataclass ready to pass directly to build_feature_vector_manual — and degrades to manual input without blocking prediction when PCS is unavailable
@@ -83,7 +86,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Pinnacle API Discovery and Client | 0/TBD | Not started | - |
-| 2. Name Resolver | 0/TBD | Not started | - |
+| 2. Name Resolver | 0/2 | Planned | - |
 | 3. Stage Context Fetcher | 0/TBD | Not started | - |
 | 4. Flask Endpoint Wiring | 0/TBD | Not started | - |
 | 5. Frontend Integration | 0/TBD | Not started | - |
