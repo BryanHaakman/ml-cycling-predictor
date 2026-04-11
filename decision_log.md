@@ -554,3 +554,23 @@ Calibration breakdown (CalibratedXGBoost):
 - One-day races: 66.8% | Stage races: 70.2%
 
 **Conclusion:** Accuracy is flat vs. pre-fix baseline (69.6% / 0.769 → 69.6% / 0.770) — well within run-to-run variance (±0.003 AUC). The C2 index alignment fix did not materially shift train/test splits, suggesting pair skips were rare enough not to cause systematic misassignment in prior runs. H4 startlist defaults fix improves live prediction calibration without measurable training impact. All fixes confirmed safe — new production baseline is 69.6% / 0.770.
+
+---
+
+## 2026-04-11 — Phase 1: Pinnacle API client (data/odds.py)
+
+**Hypothesis:** Pinnacle's internal guest API can be reliably integrated for real-time cycling H2H odds ingestion without requiring manual credential management.
+
+**Method:** Implemented `data/odds.py` — a module-level client (no class-based design) with:
+- Runtime X-Api-Key extraction from Pinnacle's frontend JS bundle (requests + regex, 4 fallback patterns)
+- Key cached in `data/.pinnacle_key_cache`, re-extracted on HTTP 401/403 (bounded to one retry)
+- `PINNACLE_SESSION_COOKIE` env var as highest-priority override
+- `OddsMarket` dataclass (6 fields) with decimal odds normalisation via `_american_to_decimal()`
+- JSONL audit log (`data/odds_log.jsonl`) appended on every call including empty fetches
+- Three-step fetch cycle: `/sports/45/leagues` → `/leagues/{id}/matchups` → `/leagues/{id}/markets/straight`, joined on `matchupId`
+
+All code written TDD: 25 unit tests written first (RED), then implementation (GREEN). No new dependencies added.
+
+**Results:** All 3 requirements satisfied: ODDS-01 (fetch live H2H markets) ✓, ODDS-02 (audit log) ✓, ODDS-03 (actionable auth error naming PINNACLE_SESSION_COOKIE) ✓. 25 unit tests passing, 39/39 full suite passing (no regressions).
+
+**Conclusion:** Implementation is straightforward — Pinnacle's guest API is a clean JSON REST endpoint with no Cloudflare bypass needed. The JS bundle extraction is the most fragile part (regex depends on Pinnacle's frontend build format), but four fallback patterns are tried and the `PINNACLE_SESSION_COOKIE` env var provides a reliable manual override path. The one-retry auth flow (invalidate cache → re-extract → retry once) keeps the retry loop bounded as required. No surprises; the live API response shapes from discovery (Plan 01) were accurate.
