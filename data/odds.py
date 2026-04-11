@@ -25,7 +25,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import requests
@@ -286,7 +286,7 @@ def _append_audit_log(
     error: Optional error message string (only included when not None).
   """
   record: dict = {
-    "fetched_at": datetime.utcnow().isoformat() + "Z",
+    "fetched_at": datetime.now(timezone.utc).isoformat(),
     "status": fetch_status,
     "market_count": len(markets),
     "markets": [dataclasses.asdict(m) for m in markets],
