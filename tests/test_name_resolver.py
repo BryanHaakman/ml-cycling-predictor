@@ -107,3 +107,96 @@ class TestCachePersistence:
     resolver = NameResolver()
     result = resolver.resolve("UNKNOWN NAME")
     assert result.url is None
+
+
+class TestFuzzyMatch:
+  """Tests for NAME-03: fuzzy matching with rapidfuzz, threshold-based accept/hint."""
+
+  def test_fuzzy_auto_accept(self, tmp_path, monkeypatch):
+    """Score >= 90 auto-accepts: url populated, method='fuzzy', mapping cached."""
+    cache_file = tmp_path / "name_mappings.json"
+    monkeypatch.setattr("data.name_resolver.CACHE_PATH", str(cache_file))
+    resolver = NameResolver()
+    # Use a slightly misspelled version of a real rider
+    # "ROGLIC PRIMOZ" has accent on Z — normalized Pinnacle would be "ROGLIC PRIMOZ"
+    # but we already test that in normalized. Use a name that ONLY fuzzy can catch:
+    # e.g., "ROGLIČ PRIMOŽ" (with accents, surname first) — normalize produces
+    # "primoz roglic" which exact-matches in normalized index.
+    # Better test: a name with a minor typo that breaks normalization:
+    # "ROGLICC PRIMOZ" — extra 'C', won't match normalized but fuzzy should score high
+    result = resolver.resolve("ROGLICC PRIMOZ")
+    # This should fuzzy-match "primoz roglic" at score >= 90 via token_sort_ratio
+    assert result.url == "rider/primoz-roglic"
+    assert result.method == "fuzzy"
+    assert result.best_score is None  # best_score only set for hint range (60-89)
+    # Verify it was cached
+    assert cache_file.exists()
+    cached = json.loads(cache_file.read_text())
+    assert cached.get("ROGLICC PRIMOZ") == "rider/primoz-roglic"
+
+  def test_fuzzy_auto_accept_cached(self, tmp_path, monkeypatch):
+    """After fuzzy auto-accept, new instance resolves via cache."""
+    cache_file = tmp_path / "name_mappings.json"
+    monkeypatch.setattr("data.name_resolver.CACHE_PATH", str(cache_file))
+    resolver = NameResolver()
+    resolver.resolve("ROGLICC PRIMOZ")  # triggers fuzzy auto-accept
+    # New instance
+    resolver2 = NameResolver()
+    result = resolver2.resolve("ROGLICC PRIMOZ")
+    assert result.url == "rider/primoz-roglic"
+    assert result.method == "cache"
+
+  def test_fuzzy_hint_range(self):
+    """Score 60-89 returns hint: url=None, best_candidate_* populated, method='unresolved'."""
+    resolver = NameResolver()
+    # A name that's somewhat close but not close enough for auto-accept
+    # "ROGLIC P" — truncated first name, should score in 60-89 range
+    result = resolver.resolve("ROGLIC P")
+    assert result.url is None
+    assert result.method == "unresolved"
+    assert result.best_candidate_url is not None
+    assert result.best_candidate_name is not None
+    assert result.best_score is not None
+    assert 60 <= result.best_score <= 89
+
+  def test_fuzzy_no_match(self):
+    """Score < 60 returns no hint: all best_candidate fields are None."""
+    resolver = NameResolver()
+    result = resolver.resolve("ZZZZNOTARIDER XXXXX")
+    assert result.url is None
+    assert result.method == "unresolved"
+    assert result.best_candidate_url is None
+    assert result.best_candidate_name is None
+    assert result.best_score is None
+
+
+class TestUnresolvedContract:
+  """Tests for NAME-05: unresolved pairs provide info for Phase 5 UI rendering."""
+
+  def test_unresolved_result_contract(self):
+    """Unresolved result has url=None and method='unresolved' — Phase 4/5 check url is None (per D-05)."""
+    resolver = NameResolver()
+    result = resolver.resolve("COMPLETELY UNKNOWN RIDER NAME")
+    assert result.url is None
+    assert result.method == "unresolved"
+    # Phase 5 checks: result.url is None
+    assert result.url is None
+
+  def test_resolve_batch_mixed(self, tmp_path, monkeypatch):
+    """Batch resolution produces correct methods for different name types."""
+    cache_file = tmp_path / "name_mappings.json"
+    cache_file.write_text(json.dumps({"CACHED NAME": "rider/cached-rider"}))
+    monkeypatch.setattr("data.name_resolver.CACHE_PATH", str(cache_file))
+    resolver = NameResolver()
+
+    results = {
+      "cache": resolver.resolve("CACHED NAME"),
+      "normalized": resolver.resolve("ROGLIC PRIMOZ"),
+      "unknown": resolver.resolve("ZZZZNOTARIDER XXXXX"),
+    }
+    assert results["cache"].method == "cache"
+    assert results["cache"].url == "rider/cached-rider"
+    assert results["normalized"].method in ("normalized", "cache")  # may be promoted to cache after resolve
+    assert results["normalized"].url == "rider/primoz-roglic"
+    assert results["unknown"].method == "unresolved"
+    assert results["unknown"].url is None
