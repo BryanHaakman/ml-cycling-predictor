@@ -32,8 +32,11 @@ class TestResolveResult:
 class TestExactMatch:
   """Tests for NAME-01: exact match against cache.db riders."""
 
-  def test_resolve_exact_match(self):
+  def test_resolve_exact_match(self, tmp_path, monkeypatch):
     """A name that exactly matches a rider in cache.db returns that rider's URL."""
+    # Isolate from real name_mappings.json
+    cache_file = tmp_path / "name_mappings.json"
+    monkeypatch.setattr("data.name_resolver.CACHE_PATH", str(cache_file))
     resolver = NameResolver()
     result = resolver.resolve("Primož Roglič")
     assert result.url == "rider/primoz-roglic"
@@ -49,8 +52,11 @@ class TestNormalizedMatch:
     ("BARDET ROMAIN", "rider/romain-bardet"),
     ("QUINTANA NAIRO", "rider/nairo-quintana"),
   ])
-  def test_normalized_match_must_pass(self, pinnacle_name, expected_url):
+  def test_normalized_match_must_pass(self, pinnacle_name, expected_url, tmp_path, monkeypatch):
     """All four must-pass Pinnacle names resolve via normalization."""
+    # Isolate from real name_mappings.json — each test gets a clean cache
+    cache_file = tmp_path / "name_mappings.json"
+    monkeypatch.setattr("data.name_resolver.CACHE_PATH", str(cache_file))
     resolver = NameResolver()
     result = resolver.resolve(pinnacle_name)
     assert result.url == expected_url, f"{pinnacle_name} -> {result}"
