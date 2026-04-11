@@ -8,7 +8,7 @@
 
 ## What We're Building
 
-An autonomous twice-daily pipeline that replaces the current fully manual betting workflow. Every morning and evening, the system pulls Pinnacle H2H cycling odds, resolves rider names to PCS identities, fetches stage context, runs model predictions on every available matchup, performs qualitative intelligence research per race, and delivers a structured email report. The user opens one email, reviews ranked matchups with both model sizing and qualitative flags, then places bets manually on Pinnacle.
+An autonomous once-daily pipeline that replaces the current fully manual betting workflow. Each evening, triggered by the completion of the nightly data pipeline, the system pulls Pinnacle H2H cycling odds, resolves rider names to PCS identities, fetches stage context, runs model predictions on every available matchup, performs qualitative intelligence research per matchup, and delivers a structured email report. The user opens one email, reviews ranked matchups with both model sizing and qualitative flags, then places bets manually on Pinnacle.
 
 **Goal:** Reduce the workflow from ~30 minutes of manual work per session to opening one email and making decisions.
 
@@ -20,7 +20,8 @@ An autonomous twice-daily pipeline that replaces the current fully manual bettin
 - Quantitative Kelly adjustment from qual signals — informational only for now (future milestone)
 - CLV tracking automation — manual for now
 - Multi-user support — personal tool only
-- Real-time odds monitoring — twice daily is sufficient (not chasing live line movement)
+- Real-time odds monitoring — once daily is sufficient (not chasing live line movement)
+- Per-race qual aggregation — qual runs per matchup for now; consolidate to per-race if token costs become significant
 
 ---
 
@@ -139,7 +140,7 @@ Edge tiers:
 
 ### 5. Qualitative Intelligence (`intelligence/qualitative.py`)
 
-One research job per race (not per matchup). Searches for tactical signals affecting that day's stage.
+One research job per matchup. Searches for tactical signals specific to both riders in that pairing. If token costs prove significant (monitored after first week), consolidate to per-race.
 
 **Sources queried (via web search):**
 - CyclingNews and VeloNews (previews, injury reports, team statements)
@@ -147,21 +148,21 @@ One research job per race (not per matchup). Searches for tactical signals affec
 - Twitter/X: rider accounts, team accounts, known cycling journalists
 - Reddit r/peloton (community intelligence, race thread)
 
-**Claude API call:** Single call per race with all search results as context. Prompt extracts:
+**Claude API call:** One call per matchup with rider names + race context + search results. Prompt extracts signals relevant to both riders specifically:
 - Domestique / protected rider designations
-- Injury or illness flags (any rider in the startlist)
+- Injury or illness flags
 - Previous day fatigue signals (hard attack, long breakaway)
 - Team strategy signals (sprint lead-out assignments, GC protection)
 - General social sentiment or notable discussion
 
-**Output per race** (`QualIntel` object):
+**Output per matchup** (`MatchupIntel` object):
 ```python
 @dataclass
-class QualIntel:
-    race_name: str
-    stage_name: str
-    race_summary: str          # 2-3 sentence tactical overview
-    rider_flags: dict[str, RiderFlag]  # keyed by PCS URL
+class MatchupIntel:
+    rider_a_url: str
+    rider_b_url: str
+    rider_a_flag: RiderFlag
+    rider_b_flag: RiderFlag
 
 @dataclass
 class RiderFlag:
@@ -173,7 +174,7 @@ class RiderFlag:
     qual_recommendation: str   # "skip" | "reduce" | "proceed" | "boost" | "no signal"
 ```
 
-**Cost estimate:** ~5-10 races/day × 1 Claude Sonnet call = ~$0.05–0.15/day. Negligible.
+**Cost estimate:** ~10-20 matchups/day × 1 Claude Haiku call = ~$0.01–0.05/day. Negligible. Use Haiku for qual research (speed + cost); escalate to Sonnet only if signal quality is poor.
 
 ---
 
@@ -242,18 +243,28 @@ New route: `POST /api/pipeline/run`
 
 ---
 
-### 9. n8n Workflow Design
+### 9. Trigger Design
 
-Two workflows (or one with two cron triggers):
+**Primary: GitHub Actions webhook → n8n → Flask**
 
-**Trigger:** Cron at 17:00 and 22:00 local time
+The nightly GitHub Actions pipeline runs at 21:00 UTC and completes ~21:20 UTC. A final step in `.github/workflows/nightly-pipeline.yml` hits an n8n webhook URL once the pipeline succeeds. n8n receives the webhook and calls the Flask pipeline endpoint. Report runs on fresh data every night, automatically.
 
-**Steps:**
-1. HTTP POST → `http://localhost:5001/api/pipeline/run` (no payload — Flask fetches odds itself)
-2. If response OK → Email node → send `report_html` to configured address
-3. If response error → Email node → send error alert
+```yaml
+# Added to end of nightly-pipeline.yml (after DB snapshot commit)
+- name: Trigger intelligence pipeline
+  if: success()
+  run: curl -s -X POST "${{ secrets.N8N_PIPELINE_WEBHOOK_URL }}"
+```
 
-Pinnacle session cookie stored as environment variable on VPS, accessed by Flask app directly. n8n has no credentials for Pinnacle.
+**n8n workflow steps:**
+1. Webhook trigger (receives POST from GitHub Actions)
+2. HTTP POST → `http://localhost:5001/api/pipeline/run`
+3. If response OK → Email node → send `report_html` to inbox
+4. If response error → Email node → send error alert
+
+**Fallback: 22:00 UTC cron** — if webhook integration is unreliable, switch n8n trigger to a simple cron at 22:00 UTC (safe buffer after nightly pipeline finishes).
+
+Pinnacle session cookie stored as environment variable on VPS, accessed by Flask app directly. n8n webhook URL stored as a GitHub Actions secret.
 
 ---
 
