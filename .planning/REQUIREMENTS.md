@@ -62,27 +62,27 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ODDS-01 | — | Pending |
-| ODDS-02 | — | Pending |
-| ODDS-03 | — | Pending |
-| ODDS-04 | — | Pending |
-| NAME-01 | — | Pending |
-| NAME-02 | — | Pending |
-| NAME-03 | — | Pending |
-| NAME-04 | — | Pending |
-| NAME-05 | — | Pending |
-| STGE-01 | — | Pending |
-| STGE-02 | — | Pending |
-| UI-01 | — | Pending |
-| UI-02 | — | Pending |
-| UI-03 | — | Pending |
-| UI-04 | — | Pending |
+| ODDS-01 | Phase 1 | Pending |
+| ODDS-02 | Phase 1 | Pending |
+| ODDS-03 | Phase 1 | Pending |
+| ODDS-04 | Phase 4 | Pending |
+| NAME-01 | Phase 2 | Pending |
+| NAME-02 | Phase 2 | Pending |
+| NAME-03 | Phase 2 | Pending |
+| NAME-04 | Phase 2 | Pending |
+| NAME-05 | Phase 2 | Pending |
+| STGE-01 | Phase 3 | Pending |
+| STGE-02 | Phase 3 | Pending |
+| UI-01 | Phase 5 | Pending |
+| UI-02 | Phase 5 | Pending |
+| UI-03 | Phase 5 | Pending |
+| UI-04 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 15 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 15 ⚠️
+- Mapped to phases: 15
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-11*
-*Last updated: 2026-04-11 — initial definition*
+*Last updated: 2026-04-11 — traceability mapped (roadmap created)*
