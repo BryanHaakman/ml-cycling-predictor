@@ -5,7 +5,7 @@ Implements a four-stage resolution pipeline:
   1. Persistent cache lookup (data/name_mappings.json)
   2. Exact match against cache.db riders table
   3. Unicode-normalized + word-order-reversed match
-  4. Placeholder for fuzzy matching (added in Plan 02)
+  4. Fuzzy match via rapidfuzz token_sort_ratio (auto-accept >= 90, hint 60-89)
 
 Accepted mappings persist in data/name_mappings.json and are reused on
 future NameResolver instantiations without re-querying cache.db.
@@ -19,6 +19,8 @@ import tempfile
 import unicodedata
 from dataclasses import dataclass
 from typing import Optional
+
+from rapidfuzz import fuzz, process
 
 from data.scraper import get_db
 
@@ -113,7 +115,7 @@ class NameResolver:
   Stage 1: Persistent cache lookup (data/name_mappings.json) — O(1)
   Stage 2: Exact match against riders corpus — O(1) via dict
   Stage 3: Unicode-normalized + word-order-reversed match — O(1) via index
-  Stage 4: Placeholder (fuzzy matching added in Plan 02)
+  Stage 4: Fuzzy match via rapidfuzz token_sort_ratio — O(n) corpus scan
 
   The full riders corpus (~5K rows) is loaded once at construction time.
   All subsequent resolve() calls operate on in-memory data structures.
@@ -140,8 +142,7 @@ class NameResolver:
   def resolve(self, pinnacle_name: str) -> ResolveResult:
     """Resolve a Pinnacle display name to a PCS rider URL.
 
-    Runs stages 1-3 in order; returns on first hit. Stage 4 (fuzzy) is
-    added in Plan 02.
+    Runs stages 1-4 in order; returns on first hit.
 
     Args:
       pinnacle_name: Rider display name from Pinnacle API (typically
@@ -183,7 +184,37 @@ class NameResolver:
         method="normalized",
       )
 
-    # Stage 4: placeholder — fuzzy matching added in Plan 02
+    # Stage 4: fuzzy match via rapidfuzz token_sort_ratio
+    fuzzy_result = process.extractOne(
+      query=normalized,
+      choices=self._corpus_normalized,
+      scorer=fuzz.token_sort_ratio,
+      score_cutoff=float(HINT_THRESHOLD),
+    )
+    if fuzzy_result is not None:
+      _matched_str, score, idx = fuzzy_result
+      matched_url, matched_name = self._corpus[idx]
+      score_int = int(score)
+      if score_int >= AUTO_ACCEPT_THRESHOLD:
+        self.accept(pinnacle_name, matched_url)
+        return ResolveResult(
+          url=matched_url,
+          best_candidate_url=None,
+          best_candidate_name=None,
+          best_score=None,
+          method="fuzzy",
+        )
+      else:
+        # Hint range: 60-89
+        return ResolveResult(
+          url=None,
+          best_candidate_url=matched_url,
+          best_candidate_name=matched_name,
+          best_score=score_int,
+          method="unresolved",
+        )
+
+    # No match at all (below HINT_THRESHOLD)
     return ResolveResult(
       url=None,
       best_candidate_url=None,
