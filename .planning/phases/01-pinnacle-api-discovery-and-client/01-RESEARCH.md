@@ -41,7 +41,7 @@
 |----|-------------|------------------|
 | ODDS-01 | System fetches today's H2H cycling markets from Pinnacle's internal API using a stored session cookie | Confirmed: guest.api.arcadia.pinnacle.com/0.1 is the correct endpoint. x-api-key (from env var) is the auth mechanism. See Standard Stack and Architecture Patterns. |
 | ODDS-02 | Raw odds data is appended to an audit log (`data/odds_log.jsonl`) after each successful fetch | Standard pattern: open in append mode, write json.dumps(record) + newline. Post-normalization decimal odds per D-09. |
-| ODDS-03 | System shows a clear, actionable error message (including which env var to update) when the Pinnacle session cookie is expired or invalid | `PinnacleAuthError` raised when x-api-key is missing or rejected. Message must name `PINNACLE_API_KEY` env var explicitly. |
+| ODDS-03 | System shows a clear, actionable error message (including which env var to update) when the Pinnacle session cookie is expired or invalid | `PinnacleAuthError` raised when x-api-key is missing or rejected. Message must name `PINNACLE_SESSION_COOKIE` env var explicitly. |
 </phase_requirements>
 
 ---
@@ -50,11 +50,11 @@
 
 **The Pinnacle endpoint, sport ID, and response schema are fully discovered.** Live API calls during this research session confirmed the complete picture. The Pinnacle website frontend uses `guest.api.arcadia.pinnacle.com/0.1` as its internal API, which is accessible with a semi-public `X-Api-Key` header. The cycling sport ID is **45**. All H2H matchups are returned as `moneyline` markets with prices in American integer format (e.g., `-121`, `+107`).
 
-**Authentication finding (critical for D-02):** Most cycling league data is accessible without any authentication. However, at least one league (`Paris-Roubaix - Women`, id 263773) returns HTTP 401 when no `X-Api-Key` is sent. With the correct `X-Api-Key`, all 65 active cycling H2H matchups are accessible. The key is a browser-extracted guest token — not a per-user credential. It may rotate over time, which is why D-01 directs using Playwright to extract it fresh from the Pinnacle website browser session. **Per D-02 conditions: cycling H2H markets DO require the x-api-key to access some leagues.** The key is extracted dynamically from Pinnacle's JS bundle (D-13); `PINNACLE_API_KEY` env var is the optional manual override (D-16).
+**Authentication finding (critical for D-02):** Most cycling league data is accessible without any authentication. However, at least one league (`Paris-Roubaix - Women`, id 263773) returns HTTP 401 when no `X-Api-Key` is sent. With the correct `X-Api-Key`, all 65 active cycling H2H matchups are accessible. The key is a browser-extracted guest token — not a per-user credential. It may rotate over time, which is why D-01 directs using Playwright to extract it fresh from the Pinnacle website browser session. **Per D-02 conditions: cycling H2H markets DO require the x-api-key to access some leagues.** The `PINNACLE_SESSION_COOKIE` env var maps to this x-api-key.
 
 **Implementation path:** Three API calls per fetch cycle: (1) get active cycling leagues, (2) get matchups per league, (3) get straight markets per league, then join on `matchupId`. Convert American odds to decimal. Build `OddsMarket` dataclass instances. Append JSONL audit record. The existing `american_odds_to_decimal()` function in `models/predict.py` can be reused directly.
 
-**Primary recommendation:** Use the `requests` library (already in `requirements.txt`) directly — no `cloudscraper` needed since the guest API is a clean JSON REST API with no Cloudflare bot challenge. Extract the x-api-key from Pinnacle's frontend JS bundle at runtime (D-13), cache in `data/.pinnacle_key_cache` (D-14), re-extract on 401/403 (D-15). `PINNACLE_API_KEY` env var is the optional manual override (D-16).
+**Primary recommendation:** Use the `requests` library (already in `requirements.txt`) directly — no `cloudscraper` needed since the guest API is a clean JSON REST API with no Cloudflare bot challenge. Store the x-api-key in `PINNACLE_SESSION_COOKIE` env var (consistent with CONTEXT.md naming). Refresh via Playwright when the key fails.
 
 ---
 
@@ -67,7 +67,7 @@
 | `dataclasses` | stdlib (Python 3.7+) | `OddsMarket` data container | Project convention — `KellyResult` in `models/predict.py` uses `@dataclass` |
 | `json` | stdlib | JSONL audit log serialization and API response parsing | Standard library, no extra dependency |
 | `logging` | stdlib | Per-module logger for fetch events and errors | Project convention — all modules use `logging.getLogger(__name__)` |
-| `os` | stdlib | `PINNACLE_API_KEY` env var reading (optional override) | Project convention — env vars read with `os.environ.get()` |
+| `os` | stdlib | `PINNACLE_SESSION_COOKIE` env var reading | Project convention — env vars read with `os.environ.get()` |
 
 ### Supporting
 | Library | Version | Purpose | When to Use |
@@ -245,34 +245,24 @@ def _append_audit_log(
 
 ### Pattern 5: Auth Error Raise
 **What:** `PinnacleAuthError` with explicit env var name in the message.
-**When to use:** When dynamic key extraction fails and `PINNACLE_API_KEY` env var is absent, or when the API returns HTTP 401/403 after one retry.
+**When to use:** When `PINNACLE_SESSION_COOKIE` env var is absent, or when the API returns HTTP 401/403.
 **Example:**
 ```python
-# Source: CONTEXT.md D-13 through D-16
+# Source: CONTEXT.md D-03, phase success criteria
 def _get_api_key() -> str:
-    # 1. Optional manual override
-    key = os.environ.get("PINNACLE_API_KEY", "").strip()
-    if key:
-        return key
-    # 2. Cache
-    key = _read_key_cache()
-    if key:
-        return key
-    # 3. JS bundle extraction
-    key = _extract_key_from_bundle()
-    if key:
-        _write_key_cache(key)
-        return key
-    raise PinnacleAuthError(
-        "Could not obtain Pinnacle API key automatically. "
-        "Set the PINNACLE_API_KEY environment variable as a manual override."
-    )
+    key = os.environ.get("PINNACLE_SESSION_COOKIE", "").strip()
+    if not key:
+        raise PinnacleAuthError(
+            "Pinnacle API key is not set. "
+            "Update the PINNACLE_SESSION_COOKIE environment variable."
+        )
+    return key
 
 def _check_auth(response: requests.Response) -> None:
     if response.status_code in (401, 403):
         raise PinnacleAuthError(
             f"Pinnacle API key is expired or invalid (HTTP {response.status_code}). "
-            "Set the PINNACLE_API_KEY environment variable as a manual override."
+            "Update the PINNACLE_SESSION_COOKIE environment variable."
         )
 ```
 
@@ -321,7 +311,7 @@ def _american_to_decimal(american: int) -> float:
 
 **Required headers:**
 ```
-X-Api-Key: {extracted from JS bundle or PINNACLE_API_KEY env var override}
+X-Api-Key: {value from PINNACLE_SESSION_COOKIE env var}
 Referer: https://www.pinnacle.com/
 Accept: application/json
 ```
@@ -498,7 +488,7 @@ ODDS_LOG_PATH = os.path.join(os.path.dirname(__file__), "odds_log.jsonl")
 
 
 class PinnacleAuthError(Exception):
-    """Raised when PINNACLE_API_KEY is missing or all key extraction attempts fail."""
+    """Raised when PINNACLE_SESSION_COOKIE is missing, expired, or rejected."""
     pass
 
 
@@ -554,12 +544,9 @@ def test_american_to_decimal_negative():
 
 
 def test_auth_error_names_env_var(monkeypatch):
-    """PinnacleAuthError message must name PINNACLE_API_KEY."""
-    monkeypatch.delenv("PINNACLE_API_KEY", raising=False)
-    # Also mock JS bundle extraction to fail so all paths are exhausted
-    monkeypatch.setattr("data.odds._extract_key_from_bundle", lambda: None)
-    monkeypatch.setattr("data.odds._read_key_cache", lambda: None)
-    with pytest.raises(PinnacleAuthError, match="PINNACLE_API_KEY"):
+    """PinnacleAuthError message must name PINNACLE_SESSION_COOKIE."""
+    monkeypatch.delenv("PINNACLE_SESSION_COOKIE", raising=False)
+    with pytest.raises(PinnacleAuthError, match="PINNACLE_SESSION_COOKIE"):
         from data.odds import fetch_cycling_h2h_markets
         fetch_cycling_h2h_markets()
 
@@ -596,17 +583,22 @@ def test_jsonl_appends_on_fetch(tmp_path, monkeypatch):
 
 ---
 
-## Open Questions (RESOLVED)
+## Open Questions
 
-1. **X-Api-Key rotation frequency** ✓ RESOLVED
-   - What we know: The key `CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R` (from oddsR package) works today. pretrehr/Sports-betting refreshes it on every run, suggesting it rotates.
-   - Resolution: Do not rely on a cached static key. Extract dynamically from Pinnacle's frontend JS bundle at runtime via `requests` + regex. Cache the result in `data/.pinnacle_key_cache`. Invalidate cache and re-extract on HTTP 401/403. If re-extraction fails, raise `PinnacleAuthError` instructing user to set `PINNACLE_API_KEY` env var. This handles any rotation frequency without user intervention.
+1. **X-Api-Key rotation frequency**
+   - What we know: The key `CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R` (from oddsR package) works today. pretrehr/Sports-betting refreshes it on every run.
+   - What's unclear: Does it change daily, weekly, or with Pinnacle frontend deploys?
+   - Recommendation: Plan the extraction step via Playwright, but include a fallback path that lets the user manually set it. On the first successful fetch, cache the key in `PINNACLE_SESSION_COOKIE`.
 
-2. **What Playwright MCP tool can capture network request headers** ✓ RESOLVED
-   - Resolution: Playwright is used **for discovery only** (one-time, during plan execution to confirm endpoint and headers). It is not used at runtime for key extraction. The `context.route()` limitation is irrelevant — discovery only needs to navigate to Pinnacle and observe network traffic via `browser_network_requests`, not intercept/modify it. Runtime key extraction uses the JS bundle scrape approach (Q1 above), which requires no Playwright.
+2. **What Playwright MCP tool can capture network request headers**
+   - What we know: D-01 directs Playwright MCP for discovery. Playwright supports network interception.
+   - What's unclear: The Playwright MCP server's `context.route()` interception support was flagged as in-development as of late 2025 (GitHub issue #1180).
+   - Recommendation: Attempt network header capture via Playwright MCP. If it doesn't work, fall back to: (a) hardcoded known key, (b) user manually provides key after inspecting Network tab.
 
-3. **Naming inconsistency — PINNACLE_SESSION_COOKIE vs x-api-key** ✓ RESOLVED
-   - Resolution: Rename to `PINNACLE_API_KEY` throughout (D-16 in CONTEXT.md). The env var is an optional manual override only — normal operation never requires it. `PinnacleAuthError` messages reference `PINNACLE_API_KEY` by name. No env var is required for normal use.
+3. **Naming inconsistency — PINNACLE_SESSION_COOKIE vs x-api-key**
+   - What we know: The CONTEXT.md uses `PINNACLE_SESSION_COOKIE` as the env var name. Research confirms the actual auth mechanism is `X-Api-Key`, not a cookie.
+   - What's unclear: Whether the user wants to rename the env var to `PINNACLE_API_KEY` for clarity.
+   - Recommendation: Keep `PINNACLE_SESSION_COOKIE` as the env var name (locked by CONTEXT.md). Internally, the code reads it as the X-Api-Key header value. Document the mismatch in `docs/pinnacle-api-notes.md`.
 
 ---
 
@@ -676,7 +668,7 @@ def test_jsonl_appends_on_fetch(tmp_path, monkeypatch):
 
 | Pattern | STRIDE | Standard Mitigation |
 |---------|--------|---------------------|
-| PINNACLE_API_KEY / cached key in logs/code | Information disclosure | Never log the key value. Only log success/failure. Never commit to git. `data/.pinnacle_key_cache` is gitignored. |
+| PINNACLE_SESSION_COOKIE in logs/code | Information disclosure | Never log the key value. Only log success/failure. Never commit to git (existing convention). |
 | Malformed API response causing crash | Tampering | Check `isinstance(resp.json(), list)` before dict access. Use `.get()` for optional fields. |
 | JSONL injection via rider names | Tampering | `json.dumps()` handles escaping automatically. No manual string formatting. |
 

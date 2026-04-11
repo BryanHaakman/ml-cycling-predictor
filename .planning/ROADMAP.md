@@ -29,11 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Calling fetch_cycling_h2h_markets() with an expired or invalid session cookie raises PinnacleAuthError with the message specifying the PINNACLE_SESSION_COOKIE env var — it does not return an empty list or raise a generic exception
   3. Every successful fetch appends a complete, parseable JSON line to data/odds_log.jsonl (verified by json.loads on each line after the call)
   4. The discovered endpoint URL, required headers, sport/market IDs, odds format (decimal vs American), and a full example response are documented in docs/pinnacle-api-notes.md before any client code is written
-**Plans**: 2 plans
-
-Plans:
-- [ ] 01-01-PLAN.md — API discovery and docs/pinnacle-api-notes.md (human review gate)
-- [ ] 01-02-PLAN.md — data/odds.py client implementation and tests/test_odds.py
+**Plans**: TBD
 
 ### Phase 2: Name Resolver
 **Goal**: A name resolver that maps every Pinnacle display name (SURNAME-FIRST, ALL-CAPS) to a PCS rider URL through a four-stage pipeline, caches accepted mappings persistently, and surfaces unresolved pairs for manual completion
@@ -86,7 +82,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Pinnacle API Discovery and Client | 0/2 | Not started | - |
+| 1. Pinnacle API Discovery and Client | 0/TBD | Not started | - |
 | 2. Name Resolver | 0/TBD | Not started | - |
 | 3. Stage Context Fetcher | 0/TBD | Not started | - |
 | 4. Flask Endpoint Wiring | 0/TBD | Not started | - |
