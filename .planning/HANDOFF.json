@@ -1,0 +1,47 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-11T05:28:44.355Z",
+  "phase": "01",
+  "phase_name": "pinnacle-api-discovery-and-client",
+  "phase_dir": ".planning/phases/01-pinnacle-api-discovery-and-client",
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
+  "status": "paused",
+  "workflow": "gsd-plan-phase 1",
+  "workflow_step": "5.5 — Create Validation Strategy (research complete, planning not yet started)",
+  "completed_tasks": [
+    {"id": 1, "name": "Run /gsd-discuss-phase 1 — CONTEXT.md created", "status": "done", "commit": "6475fa3"},
+    {"id": 2, "name": "Research Phase 1 — 01-RESEARCH.md written", "status": "done", "commit": "19e7302"}
+  ],
+  "remaining_tasks": [
+    {"id": 3, "name": "Create VALIDATION.md from template (step 5.5 — Validation Architecture section found in RESEARCH.md)", "status": "not_started"},
+    {"id": 4, "name": "Pass security gate (step 5.55)", "status": "not_started"},
+    {"id": 5, "name": "Pass UI gate (step 5.6 — likely no UI indicators)", "status": "not_started"},
+    {"id": 6, "name": "Pass schema gate (step 5.7 — likely not applicable)", "status": "not_started"},
+    {"id": 7, "name": "Spawn gsd-planner (step 8) — create PLAN.md(s)", "status": "not_started"},
+    {"id": 8, "name": "Verification loop with gsd-plan-checker (step 9)", "status": "not_started"}
+  ],
+  "blockers": [],
+  "human_actions_pending": [
+    {
+      "action": "Review and approve docs/pinnacle-api-notes.md after Phase 1 execution begins",
+      "context": "D-03: client code in data/odds.py is NOT written until user approves the API notes. This is a mandatory user checkpoint mid-execution.",
+      "blocking": true
+    }
+  ],
+  "decisions": [
+    {"decision": "Pinnacle API base URL: https://guest.api.arcadia.pinnacle.com/0.1", "rationale": "Confirmed via live HTTP calls during research", "phase": "01"},
+    {"decision": "Cycling sport ID is 45", "rationale": "Confirmed via live API call", "phase": "01"},
+    {"decision": "Auth is X-Api-Key header (not a cookie), but env var stays PINNACLE_SESSION_COOKIE", "rationale": "Locked by CONTEXT.md D-02; naming mismatch to be documented in api-notes.md", "phase": "01"},
+    {"decision": "Odds format is American integers — private conversion helper in data/odds.py", "rationale": "Confirmed via live API. Cannot reuse models/predict.py to avoid circular imports.", "phase": "01"},
+    {"decision": "No new dependencies needed — requests already in requirements.txt", "rationale": "Pinnacle guest API has no Cloudflare challenge; cloudscraper available as fallback", "phase": "01"}
+  ],
+  "uncommitted_files": [
+    "docs/superpowers/plans/2026-04-10-daily-intelligence-pipeline.md (deleted, not staged)",
+    "docs/superpowers/plans/2026-04-11-pinnacle-preload-pipeline.md (deleted, not staged)",
+    "docs/superpowers/specs/2026-04-10-daily-intelligence-pipeline-design.md (deleted, not staged)"
+  ],
+  "next_action": "Resume /gsd-plan-phase 1 — start at step 5.5 (create VALIDATION.md from template since RESEARCH.md has ## Validation Architecture section), then proceed through security/UI/schema gates, then spawn planner.",
+  "context_notes": "Research agent did live HTTP calls to Pinnacle API and confirmed the entire schema. The API is well-understood. Planner has everything it needs. Phase execution will have a mandatory user checkpoint at D-03 (review docs/pinnacle-api-notes.md before client code is written)."
+}
