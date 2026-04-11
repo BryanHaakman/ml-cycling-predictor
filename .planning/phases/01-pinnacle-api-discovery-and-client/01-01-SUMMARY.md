@@ -15,8 +15,8 @@ key_files:
     - docs/pinnacle-api-notes.md
   modified: []
 decisions:
-  - "API key is a guest token from JS bundle (not session cookie) — env var PINNACLE_API_KEY with PINNACLE_SESSION_COOKIE backward compat"
-  - "Lookup order: PINNACLE_API_KEY env var -> data/.pinnacle_key_cache -> JS bundle extraction"
+  - "API key is a guest token from JS bundle (not session cookie) — env var PINNACLE_SESSION_COOKIE per project convention (CONTEXT.md D-02)"
+  - "Lookup order: PINNACLE_SESSION_COOKIE env var -> data/.pinnacle_key_cache -> JS bundle extraction"
   - "Key rotation: discard cache and re-extract on 401/403"
 metrics:
   duration: "~5 minutes"
@@ -44,19 +44,26 @@ metrics:
 
 ## Status
 
-**CHECKPOINT REACHED** — awaiting user review and approval.
+**COMPLETE** — user reviewed, corrected, and approved.
 
-`data/odds.py` has NOT been written. No client code exists. Per plan decision D-03, Plan 02 must not
-start until the user explicitly approves this document.
+`data/odds.py` has NOT been written yet. No client code exists. Plan 02 implements the client.
 
 ## User Approval
 
-**PENDING** — user must review docs/pinnacle-api-notes.md and confirm or request corrections before
-Plan 02 (data/odds.py implementation) proceeds.
+**APPROVED** — user reviewed docs/pinnacle-api-notes.md, requested correction of env var name
+(PINNACLE_API_KEY → PINNACLE_SESSION_COOKIE), correction was applied, and user approved. Plan 02
+(data/odds.py implementation) may proceed.
 
 ## Deviations from Plan
 
-None — plan executed exactly as written.
+### User-Requested Corrections
+
+**1. [User Correction] Renamed PINNACLE_API_KEY to PINNACLE_SESSION_COOKIE**
+- **Found during:** User review (checkpoint after Task 1)
+- **Issue:** Original doc used `PINNACLE_API_KEY` in 3 places; project convention (CONTEXT.md D-02) specifies `PINNACLE_SESSION_COOKIE`
+- **Fix:** Replaced all 3 occurrences; updated clarifying note to explain the naming discrepancy (env var named SESSION_COOKIE but used as X-Api-Key header)
+- **Files modified:** docs/pinnacle-api-notes.md
+- **Commit:** fce5d0c
 
 ## Known Stubs
 
@@ -70,7 +77,8 @@ key values. The file does not introduce any new network endpoints or trust bound
 ## Self-Check
 
 - [x] docs/pinnacle-api-notes.md exists (272 lines)
-- [x] All automated validation checks pass (guest.api.arcadia.pinnacle.com, X-Api-Key, 45, 1628017725, data/.pinnacle_key_cache, PINNACLE_API_KEY, matchupId, prices)
+- [x] All automated validation checks pass (guest.api.arcadia.pinnacle.com, X-Api-Key, 45, 1628017725, data/.pinnacle_key_cache, PINNACLE_SESSION_COOKIE, matchupId, prices)
+- [x] Commit fce5d0c exists (PINNACLE_SESSION_COOKIE correction)
 - [x] Commit 84ac654 exists
 
 ## Self-Check: PASSED
