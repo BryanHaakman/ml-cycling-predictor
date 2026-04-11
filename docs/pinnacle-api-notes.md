@@ -51,16 +51,15 @@ frontend JavaScript bundle and is accessible without logging in.
 - Gitignored — never committed to the repository
 
 **Lookup order (in `data/odds.py`):**
-1. `PINNACLE_API_KEY` environment variable (highest priority)
+1. `PINNACLE_SESSION_COOKIE` environment variable (highest priority)
 2. `data/.pinnacle_key_cache` file (if env var absent)
 3. JS bundle extraction via Playwright (if cache absent or key rejected)
 
 **Key rotation:** The key may rotate when Pinnacle deploys frontend updates. When a 401 or 403 is
 returned, the client must discard the cached key and re-extract from the JS bundle.
 
-**Note:** The env var storing this key is named `PINNACLE_SESSION_COOKIE` in `.env` files and
-existing project conventions (from CONTEXT.md), but the actual API mechanism is the `X-Api-Key`
-header — not a session cookie.
+**Note:** Despite the name `PINNACLE_SESSION_COOKIE`, this value is used as the `X-Api-Key` header
+— not a session cookie. The naming is a project convention established in CONTEXT.md (D-02).
 
 ---
 
@@ -264,8 +263,7 @@ may interleave and corrupt the JSONL file.
 ## Implementation Notes for `data/odds.py`
 
 - Module-level functions (no class-based client) — per D-12
-- `PINNACLE_API_KEY` env var read with `os.environ.get("PINNACLE_API_KEY", "")` (also check
-  `PINNACLE_SESSION_COOKIE` for backward compatibility — the two names refer to the same value)
+- `PINNACLE_SESSION_COOKIE` env var read with `os.environ.get("PINNACLE_SESSION_COOKIE", "")`
 - `PinnacleAuthError` message must name the env var explicitly so user knows what to update
 - `REQUEST_TIMEOUT = 60` seconds (matches `data/scraper.py` pattern)
 - `MAX_RETRIES = 3` with exponential backoff (matches `data/scraper.py` pattern)
