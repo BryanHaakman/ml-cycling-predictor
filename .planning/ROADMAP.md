@@ -54,8 +54,8 @@ Plans:
   2. fetch_stage_context() called with an unrecognized race name or when PCS is unreachable returns a StageContext with is_resolved=False within the configured timeout (5 seconds); the calling endpoint is not blocked and manual input fields remain available
 **Plans:** 2 plans
 Plans:
-- [ ] 03-01-PLAN.md — TDD: StageContext dataclass + fetch_stage_context with fuzzy race matching, PCS fetch, 5s timeout, graceful degradation
-- [ ] 03-02-PLAN.md — Live integration tests against real PCS + human verification checkpoint
+- [x] 03-01-PLAN.md — TDD: StageContext dataclass + fetch_stage_context with fuzzy race matching, PCS fetch, 5s timeout, graceful degradation
+- [x] 03-02-PLAN.md — Live integration tests against real PCS + human verification checkpoint
 **UI hint**: yes
 
 ### Phase 4: Flask Endpoint Wiring
@@ -67,7 +67,9 @@ Plans:
   2. A curl call to POST /api/pinnacle/refresh-odds returns updated odds for an already-loaded race without triggering a stage context re-fetch or name re-resolution; the response contains only the pairs[]{odds_a, odds_b} fields
   3. Both endpoints return a structured JSON error (including env_var field) when PINNACLE_SESSION_COOKIE is absent or expired; neither endpoint returns a 500 or crashes Flask on auth failure
   4. The explicit decision on whether to pass resolved rider URLs as a startlist to build_feature_vector_manual (fixing the diff_field_rank_quality neutral default) is documented in decision_log.md and either implemented or flagged as a known gap in the API response
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 04-01-PLAN.md — Blueprint skeleton + /load + /refresh-odds + schema freeze + decision log + live verification checkpoint
 
 ### Phase 5: Frontend Integration
 **Goal**: The batch H2H prediction UI has a "Load from Pinnacle" button and race selector that auto-populate all stage fields and matchup rows from live Pinnacle data, plus a "Refresh Odds" button that updates odds without touching user-edited cells or stage context
@@ -91,5 +93,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Pinnacle API Discovery and Client | 0/TBD | Not started | - |
 | 2. Name Resolver | 0/2 | Planned | - |
 | 3. Stage Context Fetcher | 0/2 | Planned | - |
-| 4. Flask Endpoint Wiring | 0/TBD | Not started | - |
+| 4. Flask Endpoint Wiring | 0/1 | Planned | - |
 | 5. Frontend Integration | 0/TBD | Not started | - |
