@@ -210,13 +210,17 @@ def _fetch_with_timeout(race_url: str) -> StageContext:
   Catches concurrent.futures.TimeoutError specifically (Critical Finding #6).
   signal.alarm is NOT used — Windows-safe (Critical Finding #2).
 
+  The executor is shut down with wait=False so that a timed-out background
+  thread does not block the caller — the thread is abandoned (daemon behaviour).
+
   Args:
     race_url: PCS race URL.
 
   Returns:
     StageContext from _do_fetch, or _unresolved_context() on timeout/error.
   """
-  with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+  executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+  try:
     future = executor.submit(_do_fetch, race_url)
     try:
       return future.result(timeout=TIMEOUT_SECONDS)
@@ -234,6 +238,10 @@ def _fetch_with_timeout(race_url: str) -> StageContext:
         exc,
       )
       return _unresolved_context()
+  finally:
+    # Shut down without waiting — abandoned thread will finish in background.
+    # This prevents a timed-out PCS request from blocking the caller.
+    executor.shutdown(wait=False)
 
 
 def fetch_stage_context(pinnacle_race_name: str) -> StageContext:
