@@ -1,0 +1,102 @@
+name: Weekly ML Sweep
+
+on:
+  schedule:
+    # Every Sunday at 03:00 UTC (after nightly data fetch)
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      max_trials:
+        description: 'Number of hyperparameter combinations to try'
+        required: false
+        default: '36'
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  AZURE_RESOURCE_GROUP: cycling-predictor-rg
+  AZURE_ML_WORKSPACE: cycling-predictor-ml
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hour max
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install azure-ai-ml azure-identity mlflow azureml-mlflow
+
+      - name: Restore database
+        run: |
+          if [ -f data/db_snapshot.sql.gz ]; then
+            python scripts/load_db.py --force
+          fi
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run hyperparameter sweep
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          AZURE_ML_WORKSPACE: ${{ env.AZURE_ML_WORKSPACE }}
+        run: |
+          MAX_TRIALS=${{ github.event.inputs.max_trials || '36' }}
+          python scripts/aml_sweep.py \
+            --max-trials "$MAX_TRIALS" \
+            --wait
+
+      - name: Download best model
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          AZURE_ML_WORKSPACE: ${{ env.AZURE_ML_WORKSPACE }}
+        run: python scripts/aml_sweep.py --download-best
+
+      - name: Verify model quality
+        run: |
+          # Quick sanity check: ensure new model has valid AUC
+          python -c "
+          import json
+          with open('models/trained/sweep_metrics.json') as f:
+              m = json.load(f)
+          auc = m.get('roc_auc', 0)
+          print(f'Sweep best AUC: {auc:.4f}')
+          assert auc > 0.75, f'AUC too low ({auc:.4f}), keeping existing model'
+          print('✅ Model quality check passed')
+          "
+
+      - name: Commit improved model
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add models/trained/CalibratedXGBoost.pkl \
+                 models/trained/XGBoost.pkl \
+                 models/trained/scaler.pkl \
+                 models/trained/feature_names.json \
+                 models/trained/sweep_metrics.json
+          if git diff --cached --quiet; then
+            echo "No model changes"
+          else
+            AUC=$(python -c "import json; print(f'{json.load(open(\"models/trained/sweep_metrics.json\"))[\"roc_auc\"]:.4f}')")
+            git commit -m "model: weekly sweep — AUC ${AUC}
+
+            Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+            git push
+          fi

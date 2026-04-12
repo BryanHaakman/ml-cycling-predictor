@@ -711,3 +711,36 @@ Future accuracy improvements should focus on:
 - Data quality (scraper coverage gaps, missing rider stats)
 
 All experiment code retained in `models/` and `scripts/nn_experiments.py` for reproducibility. No changes to the production pipeline — CalibratedXGBoost remains the default model.
+
+---
+
+## 2026-04-12 — Azure deployment + ML sweep infrastructure
+
+**Hypothesis:** Deploying to Azure Container Apps enables public access; Azure ML HyperDrive can find better XGBoost hyperparameters than the hand-tuned defaults via Bayesian optimisation across a wide search space.
+
+**Method:** Built full deployment and ML experimentation infrastructure:
+- `Dockerfile` + `requirements-serve.txt` for containerised Flask serving (no torch, lightweight)
+- `.github/workflows/deploy.yml` — deploys to Azure Container Apps (staging then production promotion)
+- `.github/workflows/weekly-sweep.yml` — weekly Bayesian hyperparameter sweep via Azure ML HyperDrive
+- `scripts/aml_train.py` — AML-compatible training script with MLflow logging
+- `scripts/aml_sweep.py` — launches HyperDrive sweep, downloads best model
+- `deploy/azure-setup.sh` — one-time infra setup (Container Apps, Blob Storage, App Insights, Log Analytics)
+- `deploy/azure-ml-setup.sh` — one-time ML workspace + compute cluster setup (0-4 x Standard_DS3_v2)
+- Health check endpoint (`/healthz`) added to Flask app
+- Staging environment for pre-production validation
+
+**Architecture decisions:**
+- Container Apps over Azure ML managed endpoints (model is 13MB, feature computation needs SQLite — managed endpoints are overkill)
+- GHCR for container images (free with GitHub, avoids Azure Container Registry cost)
+- Scale-to-zero on both prod and staging to minimise idle cost
+- Bayesian sweep (not grid/random) for smarter hyperparameter exploration with early termination
+- Quality gate: new model only committed if AUC > 0.75
+- Production: 2 CPU / 4GB RAM; Staging: 1 CPU / 2GB RAM
+
+**Sweep search space:** n_estimators [200-800], max_depth [4-12], learning_rate LogUniform(0.0001-0.1), subsample Uniform(0.6-1.0), colsample_bytree Uniform(0.5-1.0), min_child_weight [1-50], reg_alpha LogUniform(1e-5 to 100), reg_lambda LogUniform(0.001-100), gamma Uniform(0-5), calibration [isotonic, sigmoid]. 36 trials default, 4 concurrent, Bandit early termination.
+
+**Results:** Infrastructure only — no sweep run yet. Current baseline: 0.697 acc, 0.771 AUC, 0.195 Brier.
+
+**Estimated cost:** ~$51/month total ($30 prod, $10 staging, $5 monitoring, $5 sweeps, $1 storage). Well within $150/month Azure credits.
+
+**Conclusion:** Full CI/CD + ML experimentation pipeline ready. Next step: run `./deploy/azure-setup.sh` and `./deploy/azure-ml-setup.sh` to provision Azure resources, then trigger first sweep with `python scripts/aml_sweep.py --max-trials 36`.

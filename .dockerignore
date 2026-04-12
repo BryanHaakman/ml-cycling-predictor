@@ -1,0 +1,24 @@
+# Ignore heavy/unnecessary files in Docker build
+.venv/
+.git/
+.github/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+scripts/scrape_all.py
+scripts/experiment.py
+scripts/fine_tune.py
+scripts/train.py
+scripts/update_races.py
+scripts/export_data.py
+scripts/precompute_features.py
+flask.log
+*.md
+*.egg-info/
+.DS_Store
+data/cache.db
+features/*.parquet
+models/trained/RandomForest.pkl
+models/trained/neural_net.pt
+models/trained/benchmark_results.csv

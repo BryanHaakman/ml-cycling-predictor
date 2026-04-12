@@ -52,6 +52,15 @@ def get_predictor():
     return _predictor
 
 
+@app.route("/healthz")
+def healthz():
+    """Health check endpoint for Azure Container Apps probes."""
+    predictor = get_predictor()
+    status = "healthy" if predictor else "degraded"
+    code = 200 if predictor else 503
+    return jsonify({"status": status, "model_loaded": predictor is not None}), code
+
+
 @app.route("/")
 def index():
     return render_template("index.html")

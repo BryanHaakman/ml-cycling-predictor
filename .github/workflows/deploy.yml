@@ -1,0 +1,226 @@
+name: Deploy to Azure Container Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      retrain:
+        description: 'Retrain model before deploy'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      environment:
+        description: 'Target environment'
+        required: false
+        default: 'production'
+        type: choice
+        options:
+          - 'production'
+          - 'staging'
+  # Auto-deploy after nightly data fetch
+  workflow_run:
+    workflows: ["Nightly Data Fetch"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write   # OIDC for Azure login
+  packages: write   # Push to GHCR
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  AZURE_RESOURCE_GROUP: cycling-predictor-rg
+  AZURE_CONTAINER_ENV: cycling-predictor-env
+  AZURE_LOCATION: uksouth
+  AZURE_STORAGE_CONTAINER: dbsnapshots
+
+jobs:
+  retrain:
+    if: >
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.retrain == 'true') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore database
+        run: |
+          if [ -f data/db_snapshot.sql.gz ]; then
+            python scripts/load_db.py --force
+          fi
+
+      - name: Retrain models
+        env:
+          OMP_NUM_THREADS: 1
+          MKL_NUM_THREADS: 1
+        run: python scripts/train.py
+
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-artifacts
+          path: |
+            models/trained/CalibratedXGBoost.pkl
+            models/trained/XGBoost.pkl
+            models/trained/LogisticRegression.pkl
+            models/trained/scaler.pkl
+            models/trained/feature_names.json
+            models/trained/training_meta.json
+          retention-days: 30
+
+  deploy:
+    needs: [retrain]
+    if: always() && (needs.retrain.result == 'success' || needs.retrain.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # Nightly auto-deploys go to staging first; manual picks the target
+      TARGET_ENV: ${{ github.event_name == 'workflow_run' && 'staging' || github.event.inputs.environment || 'production' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set container app name
+        id: target
+        run: |
+          if [ "$TARGET_ENV" = "staging" ]; then
+            echo "app_name=cycling-predictor-staging" >> "$GITHUB_OUTPUT"
+            echo "cpu=1.0" >> "$GITHUB_OUTPUT"
+            echo "memory=2.0Gi" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_name=cycling-predictor" >> "$GITHUB_OUTPUT"
+            echo "cpu=2.0" >> "$GITHUB_OUTPUT"
+            echo "memory=4.0Gi" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download retrained model (if available)
+        if: needs.retrain.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: model-artifacts
+          path: models/trained/
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Upload DB snapshot to Azure Blob Storage
+        run: |
+          if [ -f data/db_snapshot.sql.gz ]; then
+            az storage blob upload \
+              --container-name ${{ env.AZURE_STORAGE_CONTAINER }} \
+              --name db_snapshot.sql.gz \
+              --file data/db_snapshot.sql.gz \
+              --connection-string "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
+              --overwrite
+          fi
+
+      - name: Deploy to ${{ env.TARGET_ENV }}
+        run: |
+          az containerapp update \
+            --name ${{ steps.target.outputs.app_name }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --cpu ${{ steps.target.outputs.cpu }} \
+            --memory ${{ steps.target.outputs.memory }} \
+            --set-env-vars \
+              "FLASK_ENV=${{ env.TARGET_ENV }}" \
+              "APPLICATIONINSIGHTS_CONNECTION_STRING=${{ secrets.APPINSIGHTS_CONNECTION_STRING }}" \
+              "AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
+            --registry-server ${{ env.REGISTRY }} \
+            --registry-username ${{ github.actor }} \
+            --registry-password ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify deployment
+        run: |
+          APP_URL=$(az containerapp show \
+            --name ${{ steps.target.outputs.app_name }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "🚀 Deployed to: https://$APP_URL (${{ env.TARGET_ENV }})"
+          sleep 30
+          curl -sf "https://$APP_URL/healthz" && echo "✅ Health check passed" || echo "⚠️ Health check failed — container may still be starting"
+
+  promote-to-prod:
+    needs: [deploy]
+    if: >
+      github.event_name == 'workflow_run' &&
+      needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Promote staging image to production
+        run: |
+          # Get the image currently running in staging
+          STAGING_IMAGE=$(az containerapp show \
+            --name cycling-predictor-staging \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.template.containers[0].image" -o tsv)
+          echo "Promoting $STAGING_IMAGE to production"
+
+          az containerapp update \
+            --name cycling-predictor \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image "$STAGING_IMAGE" \
+            --cpu 2.0 \
+            --memory 4.0Gi \
+            --set-env-vars \
+              "FLASK_ENV=production" \
+              "APPLICATIONINSIGHTS_CONNECTION_STRING=${{ secrets.APPINSIGHTS_CONNECTION_STRING }}" \
+              "AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
+            --registry-server ${{ env.REGISTRY }} \
+            --registry-username ${{ github.actor }} \
+            --registry-password ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify production
+        run: |
+          PROD_URL=$(az containerapp show \
+            --name cycling-predictor \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "🚀 Production: https://$PROD_URL"
+          sleep 30
+          curl -sf "https://$PROD_URL/healthz" && echo "✅ Production healthy" || echo "⚠️ Health check pending"
