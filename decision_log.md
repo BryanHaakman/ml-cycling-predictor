@@ -626,3 +626,88 @@ Calibration excellent — all bins within +/-2% of predicted probability. High-c
 Live betting P&L after settling all Itzulia bets: 11W 4L, +740.90 profit, 73.3% win rate, 71.5% ROI on 1,035.98 staked. Bankroll: 1,392.66 from 1,000 start.
 
 **Conclusion:** Retrained model saved. Settlement bug fixed — missing result rows now treated as DNF rather than blocking settlement. CalibratedXGBoost remains best model.
+
+---
+
+## 2026-04-12 (evening) — Paris-Roubaix results + full retrain
+
+**Hypothesis:** Paris-Roubaix 2026 results were available on PCS but the scraper failed on malformed time strings (doubled text like "5:16:525:16:52"). Manual import needed followed by retrain with cobbles data.
+
+**Method:** Manually scraped Paris-Roubaix results via cloudscraper (bypassing broken time parser), inserted 175 results into DB, settled all 11 pending bets, then ran full `python scripts/train.py`.
+
+**Results:**
+Paris-Roubaix betting: 8W 3L, +268.69 profit on 348.24 staked (77.1% ROI).
+- Notable: Model correctly predicted Pogacar over van der Poel (2nd vs 4th), van Aert over Pedersen (1st vs 7th)
+- 3 losses: Hoelgaard DNS, Mohoric DNF, Vacek beaten by Walscheid
+
+Overall P&L across all 26 bets: 19W 7L, +1,009.59 profit, 73.1% win rate, 72.9% ROI. Bankroll doubled from 1,000 to 2,009.59.
+
+Training results pending (running).
+
+**Conclusion:** Model performing well on cobbles classics. PCS time-format parser bug should be investigated for future one-day races.
+
+---
+
+## 2026-04-12 — Advanced Neural Network Architecture Sweep (5 approaches, 12 configs)
+
+**Hypothesis:** Previous NN experiments (12 configs: label smoothing, focal loss, ResNets, SWA, ensembles) all hit a ~68.2% / 0.752 AUC ceiling with the standard feed-forward architecture. The decision log concluded *"the limitation is features, not model architecture."* This experiment tests whether fundamentally different NN architectures — ones that create new data representations rather than just fitting the same 424 features differently — can break through the CalibratedXGBoost ceiling of ~70% / 0.774 AUC.
+
+**Approaches tested:**
+
+1. **TabNet** (`models/tabnet_model.py`) — Sequential attention-based feature selection using `pytorch-tabnet`. Three configs: default (n_d=32, 5 steps), wide (n_d=64, 5 steps), deep (n_d=32, 7 steps).
+
+2. **FT-Transformer** (`models/ft_transformer.py`) — Feature Tokenizer + Transformer. Each feature → d_token embedding, self-attention across features, CLS token classification head. Two PCA-reduced configs (424→50 components, 79.2% variance explained) since full-feature attention over 424 tokens was impractical on CPU (~O(424²·d) per layer). Configs: small (d=64, L=2, H=4), medium (d=128, L=3, H=4).
+
+3. **Entity Embedding Network** (`models/entity_embedding.py`) — Learned latent vectors for riders (dim=32), teams (dim=16), races (dim=8) concatenated with 424 numerical features. Cold-start handling: riders/teams with <5 appearances share an "unknown" embedding. Two configs: default (256→128→64) and large (512→256→128→64).
+
+4. **Siamese Network** (`models/siamese_net.py`) — Shared rider encoder (78 features → 32-dim embedding), race encoder (20 features → 16-dim), symmetric combiner using [a−b, |a−b|, a·b, race_embed]. Weight sharing guarantees swap-equivariance. Two configs: default (128→64→1) and wide (256→128→1).
+
+5. **NN→XGBoost Stacking** (`models/nn_stacking.py`) — Train a feed-forward NN, extract 32-dim penultimate-layer embeddings, feed [424 original + 32 learned features] to CalibratedXGBoost. Two modes: concat (456 features) and embed_only (32 features).
+
+**Method:**
+```bash
+# Unified experiment runner with per-approach CLI flag
+python scripts/nn_experiments.py --approach tabnet
+python scripts/nn_experiments.py --approach ft_transformer
+python scripts/nn_experiments.py --approach entity
+python scripts/nn_experiments.py --approach siamese
+python scripts/nn_experiments.py --approach stacking
+```
+
+Three-way split: train (68%) / val (12%) / test (20%), stratified by stage (all pairs from a stage stay together). Val set used for early stopping; test set touched once. CalibratedXGBoost baseline uses train+val (its internal CV handles validation). ~291K pairs, 424 features, single-threaded on macOS ARM.
+
+**Results:**
+
+| Config | Accuracy | ROC-AUC | Brier | Notes |
+|--------|----------|---------|-------|-------|
+| **CalibratedXGBoost (baseline)** | **0.696–0.699** | **0.772–0.774** | **0.193–0.194** | *Varies ±0.003 across runs* |
+| tabnet_default | 0.697 | 0.772 | 0.195 | 13m 39s |
+| tabnet_wide | 0.696 | 0.771 | 0.195 | 14m 43s |
+| tabnet_deep | 0.678 | 0.747 | 0.204 | Overfitting with 7 steps |
+| ft_transformer_pca_small | 0.680 | 0.749 | 0.205 | PCA loses too much info |
+| ft_transformer_pca_medium | 0.682 | 0.752 | 0.203 | Still below prior NN ceiling |
+| entity_default | 0.689 | 0.762 | 0.199 | ~1 min training |
+| entity_large | 0.689 | 0.763 | 0.199 | No gain from larger capacity |
+| siamese_default | 0.692 | 0.765 | 0.197 | ~1 min training |
+| siamese_wide | 0.690 | 0.763 | 0.198 | Wider doesn't help |
+| **stacking_concat** | **0.698** | **0.773** | **0.194** | Closest to baseline |
+| stacking_embed_only | 0.695 | 0.770 | 0.196 | Embeddings alone insufficient |
+
+No approach beat the CalibratedXGBoost baseline by more than the ±0.003 AUC noise floor. Stacking_concat matched baseline (0.773 vs 0.774 AUC) but did not exceed it.
+
+**Analysis:**
+
+- **TabNet** matched baseline at default settings but degraded with deeper configs (7 steps overfits). The attention mechanism didn't find useful feature selection patterns beyond what XGBoost's splits already capture.
+- **FT-Transformer** performed worst due to PCA dimensionality reduction (79.2% variance → information loss). Full-feature attention is impractical on CPU. Even PCA-reduced results matched the old NN ceiling (~0.752), not the XGBoost ceiling.
+- **Entity embeddings** added ~1% AUC over the old feed-forward NN (0.763 vs 0.752) by learning rider/team representations, but still fell short of XGBoost by ~1% AUC. Cold-start handling may limit their value since many H2H pairs involve riders with <5 prior appearances.
+- **Siamese network** showed clean architectural design (swap-equivariant, shared encoder) and reached 0.765 AUC — better than old NNs but worse than XGBoost. The learned rider representations don't capture as much as the 424 hand-crafted features.
+- **Stacking** was most promising: NN embeddings + original features → XGBoost essentially reproduced the baseline. This suggests the NN embeddings are redundant with the hand-crafted features — XGBoost already extracts the useful signal.
+
+**Conclusion:** None of the 5 advanced NN architectures (12 total configs) beat CalibratedXGBoost. This comprehensively confirms the prior finding: **the performance ceiling is driven by the features and data, not the model architecture.** Even fundamentally different approaches — attention-based feature selection (TabNet), cross-feature self-attention (FT-Transformer), learned entity representations (Entity Embeddings), symmetric comparison networks (Siamese), and hybrid stacking (NN→XGBoost) — cannot extract more signal from the same underlying data.
+
+Future accuracy improvements should focus on:
+- Better features (e.g., weather, course profiles, recent form windows, betting market odds as features)
+- More/better training data (more races, deeper historical coverage)
+- Data quality (scraper coverage gaps, missing rider stats)
+
+All experiment code retained in `models/` and `scripts/nn_experiments.py` for reproducibility. No changes to the production pipeline — CalibratedXGBoost remains the default model.
