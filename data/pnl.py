@@ -66,6 +66,21 @@ def _create_pnl_tables(conn: sqlite3.Connection):
         race_date TEXT
     );
     """)
+
+    # Migrate: add race metadata snapshot columns to bets (idempotent)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(bets)").fetchall()}
+    migrations = [
+        ("is_one_day_race", "INTEGER"),
+        ("stage_type", "TEXT"),
+        ("profile_icon", "TEXT"),
+        ("distance_km", "REAL"),
+        ("vertical_meters", "REAL"),
+        ("num_climbs", "INTEGER"),
+    ]
+    for col_name, col_type in migrations:
+        if col_name not in existing:
+            conn.execute(f"ALTER TABLE bets ADD COLUMN {col_name} {col_type}")
+
     conn.commit()
 
 
@@ -109,6 +124,12 @@ def place_bet(
     stake: float,
     model_used: str = "",
     notes: str = "",
+    is_one_day_race: Optional[int] = None,
+    stage_type: Optional[str] = None,
+    profile_icon: Optional[str] = None,
+    distance_km: Optional[float] = None,
+    vertical_meters: Optional[float] = None,
+    num_climbs: Optional[int] = None,
     db_path: str = DB_PATH,
 ) -> int:
     """Log a new bet. Returns the bet ID."""
@@ -123,13 +144,16 @@ def place_bet(
         INSERT INTO bets (race_date, race_name, stage_url, rider_a_url, rider_a_name,
             rider_b_url, rider_b_name, selection, selection_name, decimal_odds,
             implied_prob, model_prob, edge, kelly_fraction, stake,
-            bankroll_at_bet, model_used, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            bankroll_at_bet, model_used, notes,
+            is_one_day_race, stage_type, profile_icon, distance_km, vertical_meters, num_climbs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?)
     """, (
         race_date, race_name, stage_url, rider_a_url, rider_a_name,
         rider_b_url, rider_b_name, selection, selection_name, decimal_odds,
         implied_prob, model_prob, edge, kelly_fraction, stake,
         bankroll, model_used, notes,
+        is_one_day_race, stage_type, profile_icon, distance_km, vertical_meters, num_climbs,
     ))
 
     bet_id = cursor.lastrowid
@@ -292,17 +316,18 @@ def auto_settle_from_results(db_path: str = DB_PATH) -> int:
             (bet["stage_url"], bet["rider_b_url"])
         ).fetchone()
 
-        if not result_a or not result_b:
+        rank_a = result_a["rank"] if result_a else None
+        rank_b = result_b["rank"] if result_b else None
+
+        # Neither rider has a result at all — can't settle
+        if result_a is None and result_b is None:
             continue
 
-        rank_a = result_a["rank"]
-        rank_b = result_b["rank"]
-
-        # Both DNF — can't settle
+        # Both have results but both DNF (rank is None) — can't settle
         if rank_a is None and rank_b is None:
             continue
 
-        # One DNF — finisher wins
+        # One missing/DNF — the rider with a finishing rank wins
         if rank_a is None:
             a_ahead = False
         elif rank_b is None:
@@ -319,3 +344,87 @@ def auto_settle_from_results(db_path: str = DB_PATH) -> int:
 
     conn.close()
     return settled_count
+
+
+def profile_type_label(profile_icon: Optional[str] = None,
+                       stage_type: Optional[str] = None,
+                       race_name: Optional[str] = None) -> str:
+    """Derive a human-readable profile label from raw metadata."""
+    if stage_type and stage_type in ("ITT", "TTT"):
+        return "tt"
+    if race_name and any(k in (race_name or "").lower() for k in ("roubaix", "cobble")):
+        return "cobbles"
+    mapping = {"p0": "flat", "p1": "flat", "p2": "hilly", "p3": "hilly",
+               "p4": "mountain", "p5": "mountain"}
+    return mapping.get(profile_icon, "unknown")
+
+
+def get_pnl_by_race_type(db_path: str = DB_PATH) -> list[dict]:
+    """
+    Analyse settled bet P&L grouped by profile type.
+
+    Returns list of dicts with keys: profile_type, bets, wins, losses,
+    win_rate, total_staked, total_profit, roi.
+    """
+    conn = get_pnl_db(db_path)
+    settled = conn.execute(
+        "SELECT * FROM bets WHERE status IN ('won', 'lost')"
+    ).fetchall()
+    conn.close()
+
+    groups: dict[str, list] = {}
+    for b in settled:
+        label = profile_type_label(b["profile_icon"], b["stage_type"], b["race_name"])
+        groups.setdefault(label, []).append(b)
+
+    results = []
+    for label, bets in sorted(groups.items()):
+        wins = sum(1 for b in bets if b["status"] == "won")
+        losses = len(bets) - wins
+        staked = sum(b["stake"] for b in bets)
+        profit = sum(b["profit"] for b in bets)
+        results.append({
+            "profile_type": label,
+            "bets": len(bets),
+            "wins": wins,
+            "losses": losses,
+            "win_rate": wins / len(bets) if bets else 0,
+            "total_staked": staked,
+            "total_profit": profit,
+            "roi": profit / staked if staked > 0 else 0,
+        })
+    return results
+
+
+def get_pnl_by_race_category(db_path: str = DB_PATH) -> list[dict]:
+    """
+    Analyse settled bet P&L grouped by race category (stage_race vs one_day).
+    """
+    conn = get_pnl_db(db_path)
+    settled = conn.execute(
+        "SELECT * FROM bets WHERE status IN ('won', 'lost')"
+    ).fetchall()
+    conn.close()
+
+    groups: dict[str, list] = {}
+    for b in settled:
+        label = "one_day" if b["is_one_day_race"] == 1 else "stage_race" if b["is_one_day_race"] == 0 else "unknown"
+        groups.setdefault(label, []).append(b)
+
+    results = []
+    for label, bets in sorted(groups.items()):
+        wins = sum(1 for b in bets if b["status"] == "won")
+        losses = len(bets) - wins
+        staked = sum(b["stake"] for b in bets)
+        profit = sum(b["profit"] for b in bets)
+        results.append({
+            "race_category": label,
+            "bets": len(bets),
+            "wins": wins,
+            "losses": losses,
+            "win_rate": wins / len(bets) if bets else 0,
+            "total_staked": staked,
+            "total_profit": profit,
+            "roi": profit / staked if staked > 0 else 0,
+        })
+    return results

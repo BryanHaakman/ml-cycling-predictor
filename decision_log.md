@@ -604,3 +604,25 @@ Key design decisions (from rubber-duck critique):
 **Results:** Script created and validated via dry-run. No training metrics yet — will be logged after first real fine-tune.
 
 **Conclusion:** Infrastructure for incremental fine-tuning is in place. Recommended workflow: `fine_tune.py` for daily updates, `train.py` for weekly full retrains or after pipeline changes.
+
+---
+
+## 2026-04-12 — Full retrain after Itzulia Basque Country 2026 data ingestion
+
+**Hypothesis:** Adding latest Itzulia results (6 stages, ~900 new results) and incremental 2026 race data improves model freshness. Also fixed settlement logic to handle riders missing from results (DNS/DNF not in results table).
+
+**Method:** Ran `python scripts/update_races.py` to scrape new data, then `python scripts/train.py` for full 5-model benchmark. Fixed `auto_settle_from_results()` in `data/pnl.py` to treat missing result rows as DNF (previously required both riders present to settle).
+
+**Results:**
+| Model | Accuracy | ROC-AUC | Log Loss | Brier Score |
+|-------|----------|---------|----------|-------------|
+| CalibratedXGBoost | 0.697 | 0.771 | 0.571 | 0.195 |
+| XGBoost | 0.695 | 0.769 | 0.572 | 0.195 |
+| RandomForest | 0.683 | 0.752 | 0.595 | 0.204 |
+| LogisticRegression | 0.670 | 0.735 | 0.603 | 0.208 |
+
+Calibration excellent — all bins within +/-2% of predicted probability. High-confidence picks (70%+) hit 82.4% accuracy.
+
+Live betting P&L after settling all Itzulia bets: 11W 4L, +740.90 profit, 73.3% win rate, 71.5% ROI on 1,035.98 staked. Bankroll: 1,392.66 from 1,000 start.
+
+**Conclusion:** Retrained model saved. Settlement bug fixed — missing result rows now treated as DNF rather than blocking settlement. CalibratedXGBoost remains best model.
