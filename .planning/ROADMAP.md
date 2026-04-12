@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 1: Pinnacle API Discovery and Client** - Discover internal endpoint via Playwright, implement data/odds.py with session-cookie auth and structured error handling
 - [ ] **Phase 2: Name Resolver** - Implement data/name_resolver.py with exact/normalize/fuzzy/cache pipeline for Pinnacle-to-PCS name mapping
 - [ ] **Phase 3: Stage Context Fetcher** - Implement intelligence/stage_context.py to fetch live stage details via procyclingstats lib with graceful degradation
-- [ ] **Phase 4: Flask Endpoint Wiring** - Integrate all three components into POST /api/pinnacle/load and POST /api/pinnacle/refresh-odds with locked response schema
+- [x] **Phase 4: Flask Endpoint Wiring** - Integrate all three components into POST /api/pinnacle/load and POST /api/pinnacle/refresh-odds with locked response schema (completed 2026-04-12)
 - [ ] **Phase 5: Frontend Integration** - Add "Load from Pinnacle" button, race selector, and "Refresh Odds" to batch H2H UI with per-cell dirty tracking
 
 ## Phase Details
@@ -67,9 +67,9 @@ Plans:
   2. A curl call to POST /api/pinnacle/refresh-odds returns updated odds for an already-loaded race without triggering a stage context re-fetch or name re-resolution; the response contains only the pairs[]{odds_a, odds_b} fields
   3. Both endpoints return a structured JSON error (including env_var field) when PINNACLE_SESSION_COOKIE is absent or expired; neither endpoint returns a 500 or crashes Flask on auth failure
   4. The explicit decision on whether to pass resolved rider URLs as a startlist to build_feature_vector_manual (fixing the diff_field_rank_quality neutral default) is documented in decision_log.md and either implemented or flagged as a known gap in the API response
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [ ] 04-01-PLAN.md — Blueprint skeleton + /load + /refresh-odds + schema freeze + decision log + live verification checkpoint
+- [x] 04-01-PLAN.md — Blueprint skeleton + /load + /refresh-odds + schema freeze + decision log + live verification checkpoint
 
 ### Phase 5: Frontend Integration
 **Goal**: The batch H2H prediction UI has a "Load from Pinnacle" button and race selector that auto-populate all stage fields and matchup rows from live Pinnacle data, plus a "Refresh Odds" button that updates odds without touching user-edited cells or stage context
@@ -93,5 +93,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Pinnacle API Discovery and Client | 0/TBD | Not started | - |
 | 2. Name Resolver | 0/2 | Planned | - |
 | 3. Stage Context Fetcher | 0/2 | Planned | - |
-| 4. Flask Endpoint Wiring | 0/1 | Planned | - |
+| 4. Flask Endpoint Wiring | 1/1 | Complete   | 2026-04-12 |
 | 5. Frontend Integration | 0/TBD | Not started | - |

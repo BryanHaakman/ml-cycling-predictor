@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Roadmap created — Phase 1 not yet planned
-last_updated: "2026-04-11T20:23:19.519Z"
-last_activity: 2026-04-11 -- Phase 02 execution started
+status: verifying
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-04-12T18:12:46.754Z"
+last_activity: 2026-04-12
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 4
+  total_plans: 7
+  completed_plans: 7
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** Edge detection — surfacing when PaceIQ's win probability differs from Pinnacle's implied odds by enough (>5% flag, >8% act) to justify a bet.
-**Current focus:** Phase 02 — name-resolver
+**Current focus:** Phase 04 — flask-endpoint-wiring
 
 ## Current Position
 
-Phase: 02 (name-resolver) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 02
-Last activity: 2026-04-11 -- Phase 02 execution started
+Phase: 04 (flask-endpoint-wiring) — EXECUTING
+Plan: 1 of 1
+Status: Phase complete — ready for verification
+Last activity: 2026-04-12
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 04-flask-endpoint-wiring P01 | 45 | 5 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,9 @@ Recent decisions affecting current work:
 - Pre-roadmap: Separate refresh-odds endpoint — avoid wasteful PCS re-fetch on odds check
 - Pre-roadmap: rapidfuzz for name resolution — free, no API key, token_sort_ratio order-invariant
 - Pre-roadmap: PINNACLE_SESSION_COOKIE as env var — never committed
+- [Phase 04-flask-endpoint-wiring]: _require_localhost extracted to webapp/auth.py to avoid circular import between pinnacle_bp and app.py
+- [Phase 04-flask-endpoint-wiring]: Live Pinnacle API: api.arcadia.pinnacle.com (not guest subdomain), X-Session header required, Referer must be pinnacle.ca for Canadian users
+- [Phase 04-flask-endpoint-wiring]: diff_field_rank_quality remains neutral 0.0 in Phase 4 — startlist fetch deferred (D-08)
 
 ### Pending Todos
 
@@ -78,6 +82,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-11
-Stopped at: Roadmap created — Phase 1 not yet planned
+Last session: 2026-04-12T18:12:46.749Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None

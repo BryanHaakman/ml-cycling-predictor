@@ -10,7 +10,7 @@
 - [ ] **ODDS-01**: System fetches today's H2H cycling markets from Pinnacle's internal API using a stored session cookie
 - [ ] **ODDS-02**: Raw odds data is appended to an audit log (`data/odds_log.jsonl`) after each successful fetch
 - [ ] **ODDS-03**: System shows a clear, actionable error message (including which env var to update) when the Pinnacle session cookie is expired or invalid
-- [ ] **ODDS-04**: System can re-fetch Pinnacle odds independently without re-loading stage context or re-resolving rider names
+- [x] **ODDS-04**: System can re-fetch Pinnacle odds independently without re-loading stage context or re-resolving rider names
 
 ### Name Resolution
 
@@ -65,7 +65,7 @@
 | ODDS-01 | Phase 1 | Pending |
 | ODDS-02 | Phase 1 | Pending |
 | ODDS-03 | Phase 1 | Pending |
-| ODDS-04 | Phase 4 | Pending |
+| ODDS-04 | Phase 4 | Complete |
 | NAME-01 | Phase 2 | Pending |
 | NAME-02 | Phase 2 | Pending |
 | NAME-03 | Phase 2 | Pending |
