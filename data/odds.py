@@ -34,12 +34,12 @@ import requests
 # Constants
 # ---------------------------------------------------------------------------
 
-PINNACLE_API_BASE: str = "https://guest.api.arcadia.pinnacle.com/0.1"
+PINNACLE_API_BASE: str = "https://api.arcadia.pinnacle.com/0.1"
 PINNACLE_CYCLING_SPORT_ID: int = 45
 REQUEST_TIMEOUT: int = 60  # seconds, matches data/scraper.py pattern
 KEY_CACHE_PATH: str = os.path.join(os.path.dirname(__file__), ".pinnacle_key_cache")
 ODDS_LOG_PATH: str = os.path.join(os.path.dirname(__file__), "odds_log.jsonl")
-PINNACLE_HOME_URL: str = "https://www.pinnacle.com/"
+PINNACLE_HOME_URL: str = "https://www.pinnacle.ca/"
 
 log = logging.getLogger(__name__)
 
@@ -334,6 +334,9 @@ def fetch_cycling_h2h_markets() -> list:
       "Referer": PINNACLE_HOME_URL,
       "Accept": "application/json",
     }
+    session_token = os.environ.get("PINNACLE_SESSION", "").strip()
+    if session_token:
+      headers["X-Session"] = session_token
 
     try:
       # Step 1: Get active cycling leagues
