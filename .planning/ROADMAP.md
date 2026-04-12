@@ -52,7 +52,10 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. fetch_stage_context() called with a valid current-race Pinnacle name returns a StageContext with non-zero distance, vertical_meters, num_climbs, a valid profile_icon (p1–p5), a race_date matching today's date within ±1 day, and is_resolved=True — confirmed against at least one live upcoming race
   2. fetch_stage_context() called with an unrecognized race name or when PCS is unreachable returns a StageContext with is_resolved=False within the configured timeout (5 seconds); the calling endpoint is not blocked and manual input fields remain available
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 03-01-PLAN.md — TDD: StageContext dataclass + fetch_stage_context with fuzzy race matching, PCS fetch, 5s timeout, graceful degradation
+- [ ] 03-02-PLAN.md — Live integration tests against real PCS + human verification checkpoint
 **UI hint**: yes
 
 ### Phase 4: Flask Endpoint Wiring
@@ -87,6 +90,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Pinnacle API Discovery and Client | 0/TBD | Not started | - |
 | 2. Name Resolver | 0/2 | Planned | - |
-| 3. Stage Context Fetcher | 0/TBD | Not started | - |
+| 3. Stage Context Fetcher | 0/2 | Planned | - |
 | 4. Flask Endpoint Wiring | 0/TBD | Not started | - |
 | 5. Frontend Integration | 0/TBD | Not started | - |
