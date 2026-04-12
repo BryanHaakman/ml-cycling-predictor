@@ -29,6 +29,9 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+from webapp.pinnacle_bp import pinnacle_bp
+app.register_blueprint(pinnacle_bp)
+
 _predictor = None
 
 

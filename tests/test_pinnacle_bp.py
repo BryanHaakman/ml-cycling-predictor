@@ -62,11 +62,23 @@ def _make_market(
 
 
 def _resolved(url: str = "rider/some-rider") -> ResolveResult:
-  return ResolveResult(url=url, best_candidate_name=None, best_candidate_url=None)
+  return ResolveResult(
+    url=url,
+    best_candidate_url=None,
+    best_candidate_name=None,
+    best_score=None,
+    method="exact",
+  )
 
 
 def _unresolved(hint_name: str = None, hint_url: str = None) -> ResolveResult:
-  return ResolveResult(url=None, best_candidate_name=hint_name, best_candidate_url=hint_url)
+  return ResolveResult(
+    url=None,
+    best_candidate_url=hint_url,
+    best_candidate_name=hint_name,
+    best_score=75,
+    method="fuzzy",
+  )
 
 
 # ---------------------------------------------------------------------------
