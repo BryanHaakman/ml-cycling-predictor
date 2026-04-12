@@ -392,3 +392,97 @@ class TestFallbacks:
     assert result.is_resolved is False
     # Stage should not have been constructed since no date matched
     mock_stage_cls.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestLiveIntegration (real PCS network calls — no mocks)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+class TestLiveIntegration:
+  """Live integration tests against real PCS network — no mocks.
+
+  These tests exercise the full fetch_stage_context pipeline with real
+  network calls to procyclingstats.com. They are marked `integration`
+  and can be excluded via `pytest -m "not integration"`.
+
+  Note: cache.db races table may be empty in development environments.
+  When the races table is empty, _resolve_race_url returns None immediately
+  and fetch_stage_context returns is_resolved=False without making any
+  network call. Tests are written to accommodate both scenarios.
+  """
+
+  def test_known_race_resolves(self):
+    """_do_fetch returns a populated StageContext for a known upcoming WT stage URL.
+
+    Tests PCS network connectivity and data parsing directly via _do_fetch,
+    bypassing the cache.db fuzzy-match step. Uses Giro d'Italia 2026 Stage 1
+    (upcoming as of 2026-04-12, starts 2026-05-09).
+
+    SC-1: fetch_stage_context returns a populated StageContext with
+    non-default values for distance, profile_icon, stage_type, race_date, uci_tour.
+    """
+    from intelligence.stage_context import _do_fetch, StageContext
+
+    # Giro d'Italia 2026 Stage 1 — upcoming, verified live during research
+    known_stage_url = "race/giro-d-italia/2026/stage-1"
+    result = _do_fetch(known_stage_url)
+
+    assert isinstance(result, StageContext), f"Expected StageContext, got {type(result)}"
+    assert result.is_resolved is True, (
+      f"Expected is_resolved=True for {known_stage_url}, got is_resolved=False. "
+      "Check that the PCS page is still accessible and the stage URL is valid."
+    )
+    assert result.distance > 0.0, f"distance should be > 0, got {result.distance}"
+    assert result.profile_icon in ("p1", "p2", "p3", "p4", "p5"), (
+      f"profile_icon should be p1-p5, got {result.profile_icon!r}"
+    )
+    assert result.stage_type in ("RR", "ITT", "TTT"), (
+      f"stage_type should be RR/ITT/TTT, got {result.stage_type!r}"
+    )
+    assert result.race_date != "", f"race_date should not be empty, got {result.race_date!r}"
+    assert result.uci_tour != "", f"uci_tour should not be empty, got {result.uci_tour!r}"
+    # num_climbs is 0 for upcoming stages (KOM tables absent pre-race) — acceptable per D-09
+    assert isinstance(result.num_climbs, int), f"num_climbs should be int, got {type(result.num_climbs)}"
+    print(f"\n[live] _do_fetch result for {known_stage_url}: {result}")
+
+  def test_unresolvable_race_degrades(self):
+    """fetch_stage_context with a bogus race name returns is_resolved=False quickly.
+
+    When cache.db races table is empty, the function returns immediately
+    (no network call attempted). When the DB has races, it returns after
+    fuzzy matching fails. Either way, it must complete in < 6 seconds.
+    """
+    import time
+    start = time.time()
+    result = fetch_stage_context("ZZZZZ Completely Fake Race 9999")
+    elapsed = time.time() - start
+
+    assert result.is_resolved is False
+    assert elapsed < 6.0, f"Degradation took {elapsed:.1f}s, expected < 6s"
+    print(f"\n[live] Bogus race degraded in {elapsed:.3f}s (expected < 6s)")
+
+  def test_one_day_race_resolves(self):
+    """fetch_stage_context with 'Paris-Roubaix' returns a StageContext without raising.
+
+    When cache.db races table has 2026 data, Paris-Roubaix should fuzzy-match
+    and return is_resolved=True with is_one_day_race=True.
+    When cache.db is empty (development), is_resolved=False is acceptable.
+    In both cases, the function must not raise an exception.
+    """
+    result = fetch_stage_context("Paris-Roubaix")
+
+    assert isinstance(result, StageContext), f"Expected StageContext, got {type(result)}"
+    # If resolved, validate one-day race fields
+    if result.is_resolved:
+      assert result.is_one_day_race is True, (
+        f"Paris-Roubaix should have is_one_day_race=True, got {result.is_one_day_race}"
+      )
+      assert result.distance > 0.0, f"Paris-Roubaix distance should be > 0, got {result.distance}"
+    else:
+      # cache.db empty or no 2026 races scraped yet — acceptable in dev environment
+      print(
+        "\n[live] Paris-Roubaix: is_resolved=False (cache.db may be empty — "
+        "run scripts/scrape_all.py to populate races table)"
+      )
+    print(f"\n[live] fetch_stage_context('Paris-Roubaix'): {result}")
