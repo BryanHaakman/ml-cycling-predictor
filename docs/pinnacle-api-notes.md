@@ -268,3 +268,167 @@ may interleave and corrupt the JSONL file.
 - `REQUEST_TIMEOUT = 60` seconds (matches `data/scraper.py` pattern)
 - `MAX_RETRIES = 3` with exponential backoff (matches `data/scraper.py` pattern)
 - `ODDS_LOG_PATH = os.path.join(os.path.dirname(__file__), "odds_log.jsonl")`
+
+---
+
+## Phase 4: Frozen API Response Schemas
+
+> FROZEN: These schemas were verified against live Pinnacle data before Phase 5 execution.
+> Do not modify these schemas without updating Phase 5 frontend code simultaneously.
+
+Phase 5 frontend code against the exact schemas below. Every field listed must be present
+in live responses. Extra fields are acceptable; missing fields are not.
+
+---
+
+### HTTP Status Code Table
+
+| Status | Meaning | When |
+|--------|---------|------|
+| 200 | Success | Valid response returned |
+| 400 | Bad Request | Missing or invalid request body (e.g. empty matchup_ids) |
+| 401 | Auth Error | PINNACLE_SESSION_COOKIE missing or expired |
+| 403 | Forbidden | Request not from localhost (127.0.0.1 or ::1) |
+| 503 | Network Error | Pinnacle API unreachable or timed out |
+
+---
+
+### Error Response Schema (HTTP 401)
+
+```json
+{
+  "error": "Pinnacle session expired or missing",
+  "env_var": "PINNACLE_SESSION_COOKIE",
+  "type": "auth_error"
+}
+```
+
+The `env_var` field is always present on 401 responses so the Phase 5 frontend can surface
+a clear, actionable error message to the user.
+
+### Error Response Schema (HTTP 503)
+
+```json
+{
+  "error": "Pinnacle API unavailable",
+  "detail": "Connection timeout after 60s",
+  "type": "network_error"
+}
+```
+
+### Error Response Schema (HTTP 400)
+
+```json
+{
+  "error": "matchup_ids must be non-empty",
+  "type": "bad_request"
+}
+```
+
+---
+
+### POST /api/pinnacle/load — Response Schema
+
+**Request:** `POST /api/pinnacle/load` with body `{}` (no parameters required)
+
+**Response (HTTP 200):**
+
+```json
+{
+  "races": [
+    {
+      "race_name": "Tour de Romandie",
+      "stage_resolved": true,
+      "stage_context": {
+        "distance": 156.0,
+        "vertical_meters": 887,
+        "profile_icon": "p1",
+        "profile_score": 9,
+        "is_one_day_race": false,
+        "stage_type": "RR",
+        "race_date": "2026-04-28",
+        "race_base_url": "race/tour-de-romandie/2026",
+        "num_climbs": 0,
+        "avg_temperature": null,
+        "uci_tour": "2.UWT",
+        "is_resolved": true
+      },
+      "pairs": [
+        {
+          "pinnacle_name_a": "ROGLIC Primoz",
+          "pinnacle_name_b": "VINGEGAARD Jonas",
+          "rider_a_url": "rider/primoz-roglic",
+          "rider_b_url": "rider/jonas-vingegaard",
+          "rider_a_resolved": true,
+          "rider_b_resolved": true,
+          "best_candidate_a_name": null,
+          "best_candidate_a_url": null,
+          "best_candidate_b_name": null,
+          "best_candidate_b_url": null,
+          "odds_a": 1.85,
+          "odds_b": 2.10,
+          "matchup_id": "12345"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Field notes:**
+
+- `stage_resolved` mirrors `StageContext.is_resolved`. When `false`, `stage_context` fields
+  will be zero/null defaults (distance=0, vertical_meters=0, etc.). Phase 5 frontend MUST
+  show manual input fields when `stage_resolved` is `false`.
+- `rider_a_url` / `rider_b_url`: PCS URL string (e.g. `"rider/primoz-roglic"`) when resolved,
+  `null` when unresolved (name resolution score < 90).
+- `rider_a_resolved` / `rider_b_resolved`: Boolean convenience field (true when url is non-null).
+- `best_candidate_a_name` / `best_candidate_a_url`: Populated when fuzzy score is 60–89 (hint
+  for Phase 5 autocomplete pre-fill). `null` when score < 60 or when rider is fully resolved.
+- `pinnacle_name_a` / `pinnacle_name_b`: Always present — the raw Pinnacle display name
+  regardless of resolution status. Format: "SURNAME Givenname" (e.g. "ROGLIC Primoz").
+- `matchup_id`: String — stable Pinnacle market ID. Used as the key for `/refresh-odds`.
+- `odds_a` / `odds_b`: Decimal odds (not American). Converted from Pinnacle's American integer
+  format by `data/odds.py`.
+
+**Race grouping:** Pinnacle matchups are grouped by `race_name` (exact string equality per D-04).
+Each race entry has one `stage_context` object (fetched once per race, not per pair).
+
+---
+
+### POST /api/pinnacle/refresh-odds — Request and Response Schemas
+
+**Request:** `POST /api/pinnacle/refresh-odds`
+
+```json
+{
+  "matchup_ids": ["12345", "67890"]
+}
+```
+
+- `matchup_ids`: Required. Non-empty array of string IDs received from a prior `/load` call.
+- Validation: 400 returned if body is missing, `matchup_ids` key absent, or array is empty.
+
+**Response (HTTP 200):**
+
+```json
+{
+  "pairs": [
+    {"matchup_id": "12345", "odds_a": 1.90, "odds_b": 2.05},
+    {"matchup_id": "67890", "odds_a": 2.15, "odds_b": 1.75}
+  ]
+}
+```
+
+**Field notes:**
+
+- Response contains ONLY `matchup_id`, `odds_a`, `odds_b` — no stage_context, no rider URLs,
+  no resolution fields. Stage context and name resolution are not re-run on refresh (D-05).
+- IDs not found in current Pinnacle response are silently omitted (market may have closed).
+- The client (Phase 5 JS) reconciles the returned pairs against its local state by `matchup_id`.
+- This endpoint is fully stateless — survives Flask restarts. The client re-sends the full
+  `matchup_ids` list on every refresh call.
+
+---
+
+*Schemas frozen: 2026-04-12. Phase 5 execution must not begin until live verification is complete.*

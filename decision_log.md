@@ -574,3 +574,15 @@ All code written TDD: 25 unit tests written first (RED), then implementation (GR
 **Results:** All 3 requirements satisfied: ODDS-01 (fetch live H2H markets) ✓, ODDS-02 (audit log) ✓, ODDS-03 (actionable auth error naming PINNACLE_SESSION_COOKIE) ✓. 25 unit tests passing, 39/39 full suite passing (no regressions).
 
 **Conclusion:** Implementation is straightforward — Pinnacle's guest API is a clean JSON REST endpoint with no Cloudflare bypass needed. The JS bundle extraction is the most fragile part (regex depends on Pinnacle's frontend build format), but four fallback patterns are tried and the `PINNACLE_SESSION_COOKIE` env var provides a reliable manual override path. The one-retry auth flow (invalidate cache → re-extract → retry once) keeps the retry loop bounded as required. No surprises; the live API response shapes from discovery (Plan 01) were accurate.
+
+---
+
+## 2026-04-12 — D-08: diff_field_rank_quality neutral default in Phase 4 — Startlist fetch deferred
+
+**Hypothesis:** Passing resolved rider URLs as a startlist to `build_feature_vector_manual` would improve `diff_field_rank_quality` from its neutral default (0.0) and increase prediction accuracy for Phase 4 batch loads.
+
+**Method:** Analyzed the feature importance table from the 2026-04-10 training run. `diff_field_rank_quality` has importance 0.014 (4th overall). `build_feature_vector_manual` currently hardcodes this feature at 0.0 (neutral) because no startlist is available at prediction time in the manual UI. Phase 4 could fetch the PCS startlist via `get_race_startlist` MCP tool and cross-check that Pinnacle matchup riders appear, then compute real percentile ranks. Decision: defer this to a future phase.
+
+**Results:** Feature importance 0.014. Neutral 0.0 means predictions treat all riders as equally ranked within the field. Effect is small but measurable — predictions are valid but slightly degraded relative to training distribution.
+
+**Conclusion:** Phase 4 uses neutral `diff_field_rank_quality` defaults. Startlist fetch + Pinnacle rider overlap validation explicitly deferred. The proper fix requires: (1) PCS startlist fetch via `procyclingstats` lib or `get_race_startlist` MCP tool, (2) cross-check that Pinnacle matchup riders appear in that startlist (data quality gate), (3) compute real percentile ranks. Implement as a dedicated sub-phase before the prediction pipeline is considered fully trusted. This is a known gap — flagged in the `/load` API response via `is_resolved` fields; the feature gap is not surfaced to the user.
