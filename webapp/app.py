@@ -23,23 +23,13 @@ from data.pnl import (
     set_initial_bankroll, auto_settle_from_results,
 )
 from models.predict import Predictor, kelly_criterion, decimal_odds_to_implied_prob
+from webapp.auth import _require_localhost
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
 _predictor = None
-
-
-def _require_localhost(f):
-    """Restrict a route to localhost-only access."""
-    from functools import wraps
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if request.remote_addr not in ("127.0.0.1", "::1"):
-            return jsonify({"error": "Admin access is restricted to localhost"}), 403
-        return f(*args, **kwargs)
-    return decorated
 
 
 @app.errorhandler(400)
