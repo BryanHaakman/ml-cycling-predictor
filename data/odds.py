@@ -30,16 +30,14 @@ from typing import Optional
 
 import requests
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-PINNACLE_API_BASE: str = "https://api.arcadia.pinnacle.com/0.1"
-PINNACLE_CYCLING_SPORT_ID: int = 45
-REQUEST_TIMEOUT: int = 60  # seconds, matches data/scraper.py pattern
-KEY_CACHE_PATH: str = os.path.join(os.path.dirname(__file__), ".pinnacle_key_cache")
-ODDS_LOG_PATH: str = os.path.join(os.path.dirname(__file__), "odds_log.jsonl")
-PINNACLE_HOME_URL: str = "https://www.pinnacle.ca/"
+from config import (
+  PINNACLE_API_BASE,
+  PINNACLE_CYCLING_SPORT_ID,
+  REQUEST_TIMEOUT,
+  KEY_CACHE_PATH,
+  ODDS_LOG_PATH,
+  PINNACLE_HOME_URL,
+)
 
 log = logging.getLogger(__name__)
 
