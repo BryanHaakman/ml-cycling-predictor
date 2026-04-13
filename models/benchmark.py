@@ -1,8 +1,8 @@
 """
-Train and benchmark multiple models for H2H prediction.
+Train and benchmark XGBoost models for H2H prediction.
 
-Models: Logistic Regression, Random Forest, XGBoost, Neural Network.
-Uses time-based train/test split to avoid data leakage.
+Trains raw XGBoost and CalibratedXGBoost (isotonic, for betting).
+Uses stratified stage split to avoid data leakage.
 """
 
 import os
@@ -12,8 +12,6 @@ import pickle
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     accuracy_score, roc_auc_score, log_loss, classification_report,
@@ -21,9 +19,6 @@ from sklearn.metrics import (
 )
 from sklearn.calibration import CalibratedClassifierCV
 import xgboost as xgb
-
-# Lazy import: neural_net imports torch which conflicts with XGBoost's OpenMP on macOS
-# Import inside functions that need it instead
 
 log = logging.getLogger(__name__)
 
@@ -191,13 +186,12 @@ def run_benchmark(
     feature_df: pd.DataFrame,
     date_series: pd.Series,
     test_years: list[int] = None,
-    skip_nn: bool = False,
     select_features: int = 0,
     stage_urls: pd.Series = None,
     split_mode: str = "stratified",
 ) -> dict:
     """
-    Train all models and return comparison results.
+    Train XGBoost models and return comparison results.
 
     Args:
         select_features: If > 0, use permutation importance to select top-N
@@ -250,27 +244,6 @@ def run_benchmark(
     results = []
     models = {}
 
-    # --- Logistic Regression ---
-    log.info("Training Logistic Regression...")
-    lr = LogisticRegression(max_iter=1000, C=1.0, random_state=42)
-    lr.fit(X_train_scaled, y_train)
-    lr_prob = lr.predict_proba(X_test_scaled)[:, 1]
-    lr_pred = (lr_prob >= 0.5).astype(int)
-    results.append(evaluate_model("LogisticRegression", y_test, lr_pred, lr_prob))
-    models["LogisticRegression"] = lr
-
-    # --- Random Forest ---
-    log.info("Training Random Forest...")
-    rf = RandomForestClassifier(
-        n_estimators=200, max_depth=15, min_samples_leaf=10,
-        random_state=42, n_jobs=1,
-    )
-    rf.fit(X_train_scaled, y_train)
-    rf_prob = rf.predict_proba(X_test_scaled)[:, 1]
-    rf_pred = (rf_prob >= 0.5).astype(int)
-    results.append(evaluate_model("RandomForest", y_test, rf_pred, rf_prob))
-    models["RandomForest"] = rf
-
     # --- XGBoost ---
     log.info("Training XGBoost...")
     xgb_model = xgb.XGBClassifier(
@@ -284,21 +257,6 @@ def run_benchmark(
     xgb_pred = (xgb_prob >= 0.5).astype(int)
     results.append(evaluate_model("XGBoost", y_test, xgb_pred, xgb_prob))
     models["XGBoost"] = xgb_model
-
-    # --- Neural Network ---
-    if not skip_nn:
-        log.info("Training Neural Network...")
-        from models.neural_net import train_neural_net, predict_neural_net
-        nn_model, nn_history = train_neural_net(
-            X_train_scaled, y_train.values.astype(np.float32),
-            X_test_scaled, y_test.values.astype(np.float32),
-        )
-        nn_prob = predict_neural_net(nn_model, X_test_scaled)
-        nn_pred = (nn_prob >= 0.5).astype(int)
-        results.append(evaluate_model("NeuralNetwork", y_test, nn_pred, nn_prob))
-        models["NeuralNetwork"] = nn_model
-    else:
-        log.info("Skipping Neural Network (--nn to include)")
 
     # --- Calibrated XGBoost (for betting) ---
     log.info("Training Calibrated XGBoost...")
@@ -350,12 +308,8 @@ def run_benchmark(
         json.dump(feature_names, f)
 
     for name, model in models.items():
-        if name == "NeuralNetwork":
-            import torch
-            torch.save(model.state_dict(), os.path.join(MODELS_DIR, "neural_net.pt"))
-        else:
-            with open(os.path.join(MODELS_DIR, f"{name}.pkl"), "wb") as f:
-                pickle.dump(model, f)
+        with open(os.path.join(MODELS_DIR, f"{name}.pkl"), "wb") as f:
+            pickle.dump(model, f)
 
     # Save results
     results_df.to_csv(os.path.join(MODELS_DIR, "benchmark_results.csv"), index=False)

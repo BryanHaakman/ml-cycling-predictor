@@ -699,6 +699,7 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
         rows.append(row)
         surviving_indices.append(pair_idx)
 
+
         if (i + 1) % 5000 == 0:
             log.info(f"  Progress: {i+1}/{total} pairs, {len(rows)} kept, {skipped} skipped")
 

@@ -586,3 +586,306 @@ All code written TDD: 25 unit tests written first (RED), then implementation (GR
 **Results:** Feature importance 0.014. Neutral 0.0 means predictions treat all riders as equally ranked within the field. Effect is small but measurable — predictions are valid but slightly degraded relative to training distribution.
 
 **Conclusion:** Phase 4 uses neutral `diff_field_rank_quality` defaults. Startlist fetch + Pinnacle rider overlap validation explicitly deferred. The proper fix requires: (1) PCS startlist fetch via `procyclingstats` lib or `get_race_startlist` MCP tool, (2) cross-check that Pinnacle matchup riders appear in that startlist (data quality gate), (3) compute real percentile ranks. Implement as a dedicated sub-phase before the prediction pipeline is considered fully trusted. This is a known gap — flagged in the `/load` API response via `is_resolved` fields; the feature gap is not surfaced to the user.
+---
+
+## 2026-04-09 — Retrained on updated data (through 2026-04-08)
+
+**Motivation:** Database restored from latest snapshot including results through Itzulia Basque Country Stage 3 (2026-04-08). Retrained all models on the expanded dataset.
+
+**Method:** `python scripts/train.py` — full pipeline: build pairs → compute features → train 4 models (NN skipped). Stratified stage split (80/20).
+
+**Data:** 291,176 H2H pairs from 1,458 stages. 424 features. Train: 233,576 / Test: 57,600.
+
+**Results:**
+
+| Model | Accuracy | ROC-AUC | Log Loss | Brier Score |
+|-------|----------|---------|----------|-------------|
+| CalibratedXGBoost | 0.7013 | 0.7750 | 0.5665 | 0.1931 |
+| XGBoost | 0.6987 | 0.7729 | 0.5683 | 0.1938 |
+| RandomForest | 0.6827 | 0.7527 | 0.5932 | 0.2036 |
+| LogisticRegression | 0.6728 | 0.7389 | 0.5990 | 0.2067 |
+
+Calibration (CalibratedXGBoost):
+- Low conf (50–60%): 55.6% accuracy (n=9,058)
+- Medium conf (60–70%): 65.4% accuracy (n=7,641)
+- High conf (70%+): 82.4% accuracy (n=12,542)
+
+By race type: One-day 67.6%, Stage race 70.7%.
+By course: Flat 71.3%, Hilly 68.9%, Mountain 71.6%.
+
+Top feature: `diff_career_top10_rate` (importance 0.139).
+
+Training time: 18m 18s.
+
+**Conclusion:** Marginal changes from previous run — metrics remain stable with the additional data. CalibratedXGBoost remains the best model. Models saved to `models/trained/`.
+
+---
+
+## 2026-04-10 — Retrain on Itzulia Stage 5 data + Stage 6 predictions
+
+**Hypothesis:** Incorporating latest Itzulia Basque Country results (stages 1–5) should marginally improve predictions for Stage 6, as riders' current form will be reflected in features.
+
+**Method:**
+1. `python scripts/update_races.py` — scraped latest results into cache.db (203,837 results, 5,077 riders)
+2. `python scripts/train.py` — retrained all 5 models on updated data
+3. Used `predict_manual()` with Stage 6 race parameters (135.4km, 3081m elevation, p4 mountain, 6 climbs) for 13 bookmaker match-ups
+
+**Results:**
+Calibration remained well-aligned:
+| Conf Range | Model Avg | Actual | Count |
+|------------|-----------|--------|-------|
+| 50-55% | 52.5% | 51.8% | 4,348 |
+| 55-60% | 57.5% | 56.6% | 3,960 |
+| 60-65% | 62.5% | 62.9% | 3,782 |
+| 65-70% | 67.5% | 68.7% | 3,493 |
+| 70-75% | 72.5% | 72.9% | 3,386 |
+| 75-80% | 77.4% | 78.5% | 2,868 |
+| 80-100% | 87.2% | 88.0% | 6,563 |
+
+Top feature: `diff_career_top10_rate` (0.169).
+
+Stage 6 predictions: 10/13 markets showed positive edge. 3 markets (Martin vs Beloki, Tejada vs Champoussin, Arrieta vs Ruiz) had no value — model agreed with bookmaker pricing.
+
+Largest edges: Gaffuri over Pericas (+25.0%), Fortunato over J.P. Lopez (+22.4%), T.H. Johannessen over Vauquelin (+15.5%).
+
+**Conclusion:** Model retrained successfully. 10 bets placed for Stage 6 totalling £555.91 via half-Kelly staking. Previous Stage 5 bets settled 4W/1L for +£410.60 profit (85.5% ROI).
+
+---
+
+## 2026-04-10 — Implemented incremental fine-tuning (warm-start XGBoost)
+
+**Hypothesis:** Daily full retrains (~15 min) are wasteful when only 1-3 new stages arrive. XGBoost's warm-start can add trees for new data much faster while preserving existing knowledge.
+
+**Method:** Created `scripts/fine_tune.py` with the following design:
+
+- Loads existing `XGBoost.pkl` and warm-starts with `xgb_model` parameter
+- Fine-tune params: `n_estimators=50` (additional trees), `learning_rate=0.01` (10x lower than full train)
+- **Replay buffer**: mixes 3× historical pairs with new pairs to prevent overfitting to small batches
+- **Prefit calibration**: uses `CalibratedClassifierCV(cv="prefit", method="sigmoid")` — Platt scaling is more stable than isotonic on small calibration sets
+- **Minimum stage gate**: requires ≥3 new stages before fine-tuning (configurable)
+- **Backup**: saves previous models before overwriting
+- **Metadata tracking**: `models/trained/training_meta.json` tracks last train date, fine-tune count, and triggers full retrain warning after 7 incremental updates
+
+Also added `since_date` parameter to `build_pairs_sampled()` in `data/builder.py` for date-range filtering.
+
+Key design decisions (from rubber-duck critique):
+1. Calibrated model uses prefit mode (not cv=5 which creates internal clones)
+2. Sigmoid calibration preferred over isotonic for small sample stability
+3. Replay buffer prevents new trees from overfitting to stage-specific residuals
+4. Test set (2025-2026) used only for logging metrics, not as a tuning gate
+
+**Results:** Script created and validated via dry-run. No training metrics yet — will be logged after first real fine-tune.
+
+**Conclusion:** Infrastructure for incremental fine-tuning is in place. Recommended workflow: `fine_tune.py` for daily updates, `train.py` for weekly full retrains or after pipeline changes.
+
+---
+
+## 2026-04-12 — Full retrain after Itzulia Basque Country 2026 data ingestion
+
+**Hypothesis:** Adding latest Itzulia results (6 stages, ~900 new results) and incremental 2026 race data improves model freshness. Also fixed settlement logic to handle riders missing from results (DNS/DNF not in results table).
+
+**Method:** Ran `python scripts/update_races.py` to scrape new data, then `python scripts/train.py` for full 5-model benchmark. Fixed `auto_settle_from_results()` in `data/pnl.py` to treat missing result rows as DNF (previously required both riders present to settle).
+
+**Results:**
+| Model | Accuracy | ROC-AUC | Log Loss | Brier Score |
+|-------|----------|---------|----------|-------------|
+| CalibratedXGBoost | 0.697 | 0.771 | 0.571 | 0.195 |
+| XGBoost | 0.695 | 0.769 | 0.572 | 0.195 |
+| RandomForest | 0.683 | 0.752 | 0.595 | 0.204 |
+| LogisticRegression | 0.670 | 0.735 | 0.603 | 0.208 |
+
+Calibration excellent — all bins within +/-2% of predicted probability. High-confidence picks (70%+) hit 82.4% accuracy.
+
+Live betting P&L after settling all Itzulia bets: 11W 4L, +740.90 profit, 73.3% win rate, 71.5% ROI on 1,035.98 staked. Bankroll: 1,392.66 from 1,000 start.
+
+**Conclusion:** Retrained model saved. Settlement bug fixed — missing result rows now treated as DNF rather than blocking settlement. CalibratedXGBoost remains best model.
+
+---
+
+## 2026-04-12 (evening) — Paris-Roubaix results + full retrain
+
+**Hypothesis:** Paris-Roubaix 2026 results were available on PCS but the scraper failed on malformed time strings (doubled text like "5:16:525:16:52"). Manual import needed followed by retrain with cobbles data.
+
+**Method:** Manually scraped Paris-Roubaix results via cloudscraper (bypassing broken time parser), inserted 175 results into DB, settled all 11 pending bets, then ran full `python scripts/train.py`.
+
+**Results:**
+Paris-Roubaix betting: 8W 3L, +268.69 profit on 348.24 staked (77.1% ROI).
+- Notable: Model correctly predicted Pogacar over van der Poel (2nd vs 4th), van Aert over Pedersen (1st vs 7th)
+- 3 losses: Hoelgaard DNS, Mohoric DNF, Vacek beaten by Walscheid
+
+Overall P&L across all 26 bets: 19W 7L, +1,009.59 profit, 73.1% win rate, 72.9% ROI. Bankroll doubled from 1,000 to 2,009.59.
+
+Training results pending (running).
+
+**Conclusion:** Model performing well on cobbles classics. PCS time-format parser bug should be investigated for future one-day races.
+
+---
+
+## 2026-04-12 — Advanced Neural Network Architecture Sweep (5 approaches, 12 configs)
+
+**Hypothesis:** Previous NN experiments (12 configs: label smoothing, focal loss, ResNets, SWA, ensembles) all hit a ~68.2% / 0.752 AUC ceiling with the standard feed-forward architecture. The decision log concluded *"the limitation is features, not model architecture."* This experiment tests whether fundamentally different NN architectures — ones that create new data representations rather than just fitting the same 424 features differently — can break through the CalibratedXGBoost ceiling of ~70% / 0.774 AUC.
+
+**Approaches tested:**
+
+1. **TabNet** (`models/tabnet_model.py`) — Sequential attention-based feature selection using `pytorch-tabnet`. Three configs: default (n_d=32, 5 steps), wide (n_d=64, 5 steps), deep (n_d=32, 7 steps).
+
+2. **FT-Transformer** (`models/ft_transformer.py`) — Feature Tokenizer + Transformer. Each feature → d_token embedding, self-attention across features, CLS token classification head. Two PCA-reduced configs (424→50 components, 79.2% variance explained) since full-feature attention over 424 tokens was impractical on CPU (~O(424²·d) per layer). Configs: small (d=64, L=2, H=4), medium (d=128, L=3, H=4).
+
+3. **Entity Embedding Network** (`models/entity_embedding.py`) — Learned latent vectors for riders (dim=32), teams (dim=16), races (dim=8) concatenated with 424 numerical features. Cold-start handling: riders/teams with <5 appearances share an "unknown" embedding. Two configs: default (256→128→64) and large (512→256→128→64).
+
+4. **Siamese Network** (`models/siamese_net.py`) — Shared rider encoder (78 features → 32-dim embedding), race encoder (20 features → 16-dim), symmetric combiner using [a−b, |a−b|, a·b, race_embed]. Weight sharing guarantees swap-equivariance. Two configs: default (128→64→1) and wide (256→128→1).
+
+5. **NN→XGBoost Stacking** (`models/nn_stacking.py`) — Train a feed-forward NN, extract 32-dim penultimate-layer embeddings, feed [424 original + 32 learned features] to CalibratedXGBoost. Two modes: concat (456 features) and embed_only (32 features).
+
+**Method:**
+```bash
+# Unified experiment runner with per-approach CLI flag
+python scripts/nn_experiments.py --approach tabnet
+python scripts/nn_experiments.py --approach ft_transformer
+python scripts/nn_experiments.py --approach entity
+python scripts/nn_experiments.py --approach siamese
+python scripts/nn_experiments.py --approach stacking
+```
+
+Three-way split: train (68%) / val (12%) / test (20%), stratified by stage (all pairs from a stage stay together). Val set used for early stopping; test set touched once. CalibratedXGBoost baseline uses train+val (its internal CV handles validation). ~291K pairs, 424 features, single-threaded on macOS ARM.
+
+**Results:**
+
+| Config | Accuracy | ROC-AUC | Brier | Notes |
+|--------|----------|---------|-------|-------|
+| **CalibratedXGBoost (baseline)** | **0.696–0.699** | **0.772–0.774** | **0.193–0.194** | *Varies ±0.003 across runs* |
+| tabnet_default | 0.697 | 0.772 | 0.195 | 13m 39s |
+| tabnet_wide | 0.696 | 0.771 | 0.195 | 14m 43s |
+| tabnet_deep | 0.678 | 0.747 | 0.204 | Overfitting with 7 steps |
+| ft_transformer_pca_small | 0.680 | 0.749 | 0.205 | PCA loses too much info |
+| ft_transformer_pca_medium | 0.682 | 0.752 | 0.203 | Still below prior NN ceiling |
+| entity_default | 0.689 | 0.762 | 0.199 | ~1 min training |
+| entity_large | 0.689 | 0.763 | 0.199 | No gain from larger capacity |
+| siamese_default | 0.692 | 0.765 | 0.197 | ~1 min training |
+| siamese_wide | 0.690 | 0.763 | 0.198 | Wider doesn't help |
+| **stacking_concat** | **0.698** | **0.773** | **0.194** | Closest to baseline |
+| stacking_embed_only | 0.695 | 0.770 | 0.196 | Embeddings alone insufficient |
+
+No approach beat the CalibratedXGBoost baseline by more than the ±0.003 AUC noise floor. Stacking_concat matched baseline (0.773 vs 0.774 AUC) but did not exceed it.
+
+**Analysis:**
+
+- **TabNet** matched baseline at default settings but degraded with deeper configs (7 steps overfits). The attention mechanism didn't find useful feature selection patterns beyond what XGBoost's splits already capture.
+- **FT-Transformer** performed worst due to PCA dimensionality reduction (79.2% variance → information loss). Full-feature attention is impractical on CPU. Even PCA-reduced results matched the old NN ceiling (~0.752), not the XGBoost ceiling.
+- **Entity embeddings** added ~1% AUC over the old feed-forward NN (0.763 vs 0.752) by learning rider/team representations, but still fell short of XGBoost by ~1% AUC. Cold-start handling may limit their value since many H2H pairs involve riders with <5 prior appearances.
+- **Siamese network** showed clean architectural design (swap-equivariant, shared encoder) and reached 0.765 AUC — better than old NNs but worse than XGBoost. The learned rider representations don't capture as much as the 424 hand-crafted features.
+- **Stacking** was most promising: NN embeddings + original features → XGBoost essentially reproduced the baseline. This suggests the NN embeddings are redundant with the hand-crafted features — XGBoost already extracts the useful signal.
+
+**Conclusion:** None of the 5 advanced NN architectures (12 total configs) beat CalibratedXGBoost. This comprehensively confirms the prior finding: **the performance ceiling is driven by the features and data, not the model architecture.** Even fundamentally different approaches — attention-based feature selection (TabNet), cross-feature self-attention (FT-Transformer), learned entity representations (Entity Embeddings), symmetric comparison networks (Siamese), and hybrid stacking (NN→XGBoost) — cannot extract more signal from the same underlying data.
+
+Future accuracy improvements should focus on:
+- Better features (e.g., weather, course profiles, recent form windows, betting market odds as features)
+- More/better training data (more races, deeper historical coverage)
+- Data quality (scraper coverage gaps, missing rider stats)
+
+All experiment code retained in `models/` and `scripts/nn_experiments.py` for reproducibility. No changes to the production pipeline — CalibratedXGBoost remains the default model.
+
+---
+
+## 2026-04-13 — Rider Variance Features + Retrain
+
+**Hypothesis:** Adding rider consistency/volatility features (stddev, IQR, CV, range of historical results) will provide new signal about how predictable a rider is, potentially improving AUC.
+
+**Method:** Added 17 new variance features to `features/rider_features.py`:
+- Career: `career_rank_stddev`, `career_rank_iqr`, `career_pcs_stddev`, `career_rank_cv`
+- Form windows: `form_{30d,60d,90d,180d}_rank_stddev`
+- Recent race windows: `form_last{5,10,20}_rank_stddev`, `form_last{5,10,20}_rank_range`
+- Course-type: `course_{flat,hilly,mountain}_rank_stddev`
+
+Retrained XGBoost with all features (~460 total, up from 423). Same train/test split.
+
+**Results:**
+| Config | Accuracy | ROC-AUC | Brier | ECE |
+|--------|----------|---------|-------|-----|
+| Baseline (423 features) | 0.6980 | 0.7733 | 0.1938 | 0.0105 |
+| + Variance features (460) | 0.6981 | 0.7708 | 0.1947 | 0.0102 |
+
+Variance features ARE used by XGBoost: `diff_career_rank_iqr` rank 17, `diff_career_rank_stddev` rank 20 in feature importance. But overall AUC slightly decreased (within ±0.003 noise).
+
+**Conclusion:** Variance features provide useful information about rider consistency (XGBoost selects them) but do not improve prediction accuracy. The features are retained because they enable the post-processing variance model (σ estimation). No standalone accuracy benefit.
+
+---
+
+## 2026-04-13 — Post-Processing Probability Adjustments (Comprehensive Experiment)
+
+**Hypothesis:** Adding a post-processing layer on top of CalibratedXGBoost — with variance-aware Φ-adjustment, Bayesian uncertainty, upset injection, extreme shrinkage, and alternative calibration methods — could improve Brier score and calibration.
+
+**Framework:** P(A>B) = Φ(Φ⁻¹(P_raw) / √(1 + σA² + σB² + τA² + τB²))
+- σ: race-day variance from rider rank_stddev + course type
+- τ: epistemic uncertainty = scale/√(n_recent + κ)
+- ε: chaos probability, applied as mixture (1-ε)·P + ε·0.5
+
+**Method:** Built `models/post_processing.py` (ProbabilityAdjuster class) and `scripts/eval_post_processing.py`. Tested 13 configurations on 57,800 test pairs:
+- Calibration methods: temperature scaling, Platt scaling, beta calibration
+- Individual components: variance-only, Bayesian-only, upset-only, shrinkage-only
+- Combined: variance+Bayesian, full pipeline, full+temperature
+- Parameter variants: conservative σ, aggressive ε
+
+Calibration parameters (temperature T, Platt a/b, beta a/b/c) fitted on 30% held-out calibration set from training data.
+
+**Results:**
+| Config | Accuracy | AUC | Brier | ΔECE | ΔBrier |
+|--------|----------|-----|-------|------|--------|
+| **baseline_raw** | **0.6982** | **0.7720** | **0.1943** | **—** | **—** |
+| temperature_scaling | 0.6982 | 0.7720 | 0.1943 | −0.0000 | +0.0000 |
+| shrinkage_only | 0.6982 | 0.7720 | 0.1943 | +0.0000 | +0.0000 |
+| bayesian_only | 0.6982 | 0.7720 | 0.1943 | +0.0004 | +0.0000 |
+| upset_only | 0.6982 | 0.7720 | 0.1945 | +0.0073 | +0.0003 |
+| platt_scaling | 0.6982 | 0.7720 | 0.1955 | +0.0253 | +0.0013 |
+| beta_calibration | 0.6980 | 0.7720 | 0.1955 | +0.0259 | +0.0013 |
+| variance_only | 0.6982 | 0.7717 | 0.1971 | +0.0354 | +0.0028 |
+| variance_plus_bayesian | 0.6982 | 0.7717 | 0.1971 | +0.0357 | +0.0029 |
+| full_pipeline | 0.6982 | 0.7717 | 0.1979 | +0.0419 | +0.0037 |
+| full_with_temperature | 0.6982 | 0.7717 | 0.1979 | +0.0419 | +0.0037 |
+| aggressive_epsilon | 0.6982 | 0.7716 | 0.1986 | +0.0462 | +0.0044 |
+| conservative_sigma | 0.6982 | 0.7713 | 0.2028 | +0.0673 | +0.0085 |
+
+Key findings:
+- **Temperature ≈ 1.0** — confirms model is already well-calibrated
+- **Isotonic calibration (in CalibratedClassifierCV) is near-optimal** — ECE=0.0095, reliability=0.00016
+- **All adjustments degrade calibration** — variance-based Φ-adjustment is the worst offender, pushing predictions toward 0.5 when they're already correctly distributed
+- **Platt and beta calibration are worse than isotonic** — the non-parametric isotonic approach better captures the true calibration mapping
+- **Extreme shrinkage has no effect** — the model doesn't produce many extreme predictions that need capping
+
+**Conclusion:** The CalibratedXGBoost with isotonic regression is **already near-optimally calibrated**. Post-processing adjustments are counterproductive — they add noise to a well-calibrated output. The Φ-framework is mathematically sound but assumes the base model is uncalibrated; since isotonic regression already handles calibration, layering additional adjustments on top hurts rather than helps.
+
+**Implications for future work:**
+- Do NOT add a post-processing layer to the production pipeline
+- The `models/post_processing.py` module is retained for reference but should not be used in production
+- Kelly staking could still benefit from uncertainty estimates (τ) for position sizing, even though the probabilities themselves don't need adjustment
+- Accuracy improvements must come from better features or data, not from post-prediction adjustments
+- The model's weak spot is discrimination (AUC 0.772), not calibration (ECE 0.010)
+
+---
+
+## 2026-04-13 — Feature selection: top 150 by permutation importance
+
+**Hypothesis:** Many of the 474 features have near-zero importance. Selecting only the top features by permutation importance should maintain or improve accuracy while reducing noise and training time.
+
+**Method:** Trained CalibratedXGBoost with different feature counts (top 50, 75, 100, 150, 200, 300, and all 474), selected by permutation importance ranking. Same stratified stage split.
+
+**Results:**
+| Features | Accuracy | ROC-AUC | Brier |
+|----------|----------|---------|-------|
+| 50 | 0.6953 | 0.7677 | 0.1960 |
+| 75 | 0.6966 | 0.7701 | 0.1951 |
+| 100 | 0.6979 | 0.7715 | 0.1945 |
+| **150** | **0.6984** | **0.7719** | **0.1943** |
+| 200 | 0.6979 | 0.7722 | 0.1942 |
+| 300 | 0.6967 | 0.7713 | 0.1945 |
+| 474 (all) | 0.6971 | 0.7716 | 0.1944 |
+
+Final retrained model (150 features): AUC=0.7741, Brier=0.1935.
+
+Key observations:
+- 17 features had zero importance — pure dead weight
+- Top 50 features capture 40% of total importance, top 150 capture ~59%
+- Beyond 150 features, adding more adds noise rather than signal
+- Top features: `diff_career_top10_rate` (11.4%), `interact_diff_quality_x_form` (6.3%), `interact_diff_sprint_x_flat` (2.0%)
+
+**Conclusion:** 150 features is the sweet spot. Made this the default in `train.py --select-features 150`. Reduces model complexity by 68% with no accuracy loss. Also removed non-XGBoost models (LR, RF, NN) from the repo — none beat XGBoost in prior experiments.

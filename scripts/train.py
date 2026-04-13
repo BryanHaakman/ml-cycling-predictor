@@ -4,17 +4,18 @@ Full training pipeline: build pairs → compute features → train models.
 Run after scraping data.
 
 Usage:
-  python -u scripts/train.py          # Skip NN (fast, ~25 min)
-  python -u scripts/train.py --nn     # Include Neural Network (slow)
+  python -u scripts/train.py
 """
 
 import os
 import sys
 import logging
 import time
+import json
 import argparse
+from datetime import datetime
 
-# Prevent thread deadlock between sklearn and PyTorch on macOS
+# Prevent thread deadlock between sklearn and XGBoost on macOS
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
@@ -39,10 +40,8 @@ def _elapsed(start):
 
 def main():
     parser = argparse.ArgumentParser(description="Train cycling H2H predictor")
-    parser.add_argument("--nn", action="store_true",
-                        help="Include Neural Network in benchmark (slow, off by default)")
-    parser.add_argument("--select-features", type=int, default=0, metavar="N",
-                        help="Select top N features by permutation importance (0 = use all)")
+    parser.add_argument("--select-features", type=int, default=150, metavar="N",
+                        help="Select top N features by permutation importance (0 = use all, default: 150)")
     parser.add_argument("--wt-only", action="store_true",
                         help="Train only on World Tour races (uci_tour 1.UWT/2.UWT)")
     parser.add_argument("--split", choices=["stratified", "time"], default="stratified",
@@ -90,12 +89,32 @@ def main():
 
     log.info("\n=== Step 3: Training and benchmarking models ===")
     t3 = time.time()
-    results = run_benchmark(feature_df, dates, skip_nn=not args.nn,
+    results = run_benchmark(feature_df, dates,
                             select_features=args.select_features,
                             stage_urls=stage_urls,
                             split_mode=args.split)
 
     log.info(f"Training complete ({_elapsed(t3)})")
+
+    # Save training metadata for fine-tuning
+    meta_path = os.path.join("models", "trained", "training_meta.json")
+    conn = get_db()
+    latest_date = conn.execute("""
+        SELECT MAX(s.date) as d FROM stages s
+        JOIN results r ON r.stage_url = s.url WHERE s.date IS NOT NULL
+    """).fetchone()["d"]
+    conn.close()
+
+    meta = {
+        "last_full_train": datetime.now().isoformat(),
+        "last_fine_tune": None,
+        "fine_tune_count": 0,
+        "last_data_date": latest_date,
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    log.info(f"Saved training metadata (data through {latest_date})")
+
     log.info(f"\n✅ Done! Total time: {_elapsed(t0)}")
     log.info(f"Best model: {results['best_model_name']}")
     log.info("Models saved to models/trained/")

@@ -4,17 +4,30 @@ Cycling H2H betting intelligence system. Predicts which rider finishes ahead in 
 
 Forked from [lewis-mcgillion/cycling-predictor](https://github.com/lewis-mcgillion/cycling-predictor). Live data layer: [lewis-mcgillion/procyclingstats-mcp-server](https://github.com/lewis-mcgillion/procyclingstats-mcp-server).
 
+The pipeline scrapes historical results from ProCyclingStats, engineers ~475 candidate features per matchup, selects the top 150 by permutation importance, and trains a Calibrated XGBoost model. Predictions are served through a Flask web app with Kelly Criterion staking advice and P&L tracking.
+
+**Current model performance** (stratified stage split, test set ~57K pairs):
+
+| Model | Accuracy | ROC-AUC | Brier Score |
+|-------|----------|---------|-------------|
+| CalibratedXGBoost | 70.0% | 0.774 | 0.194 |
+| XGBoost | 69.8% | 0.771 | 0.194 |
+
 ## How It Works
 
-**Scrape → Build H2H Pairs → Engineer Features → Train Models → Serve Predictions**
+**Scrape → Build H2H Pairs → Engineer Features → Select Top 150 → Train Model → Serve Predictions**
 
-1. **Scraper** pulls historical race results from ProCyclingStats into a local SQLite database (`data/cache.db`)
-2. **Pair builder** generates head-to-head training pairs from race results (World Tour only, top-50 finishers)
-3. **Feature pipeline** computes ~295 features per matchup — rider form, race profile, terrain affinity, one-day vs stage form, startlist-relative strength, H2H history, and interaction features
-4. **Benchmark** trains and evaluates 5 models: Logistic Regression, Random Forest, XGBoost, Neural Network, Calibrated XGBoost
-5. **Web app** serves predictions with confidence-scaled Kelly staking, a results browser, and P&L tracking
-
-Current best model: **CalibratedXGBoost** — ~69.8% accuracy, ~0.773 ROC-AUC (stratified stage split)
+1. **Scraper** pulls race results from ProCyclingStats into a local SQLite database (`data/cache.db`)
+2. **Builder** generates head-to-head training pairs from race results (top-50 finishers, up to 200 pairs per stage, random A/B swap to prevent ordering bias)
+3. **Feature pipeline** computes ~475 candidate features per matchup across 6 categories:
+   - **Rider features** (×2): form, consistency, terrain affinity, career stats, variance metrics (138 per rider)
+   - **Race features**: profile, distance, elevation, race tier (20 features)
+   - **Diff features**: A minus B differences for key rider stats
+   - **Interaction features**: cross-terms (e.g., sprint ability × flat race)
+   - **H2H features**: historical head-to-head record between the pair
+4. **Feature selection** trains a throwaway XGBoost on all features, ranks by permutation importance, and keeps the top 150 (eliminates noise — accuracy improves slightly vs using all 475)
+5. **Training** trains XGBoost and Calibrated XGBoost (isotonic calibration via `CalibratedClassifierCV` with 5-fold CV)
+6. **Web app** serves predictions with Kelly Criterion staking advice, a results browser, and P&L tracking
 
 ## Setup
 
@@ -38,15 +51,29 @@ python scripts/update_races.py
 # Pre-compute feature cache (~18 min first run, ~1s incremental)
 python scripts/precompute_features.py
 
-# Train models (builds pairs, engineers features, benchmarks 5 models)
+# Train models (builds pairs, engineers features, selects top 150, trains XGBoost)
 python scripts/train.py
+python scripts/train.py --select-features 200  # override feature count
+
+# Incremental fine-tune on new data (warm-start, faster than full retrain)
+python scripts/fine_tune.py
 
 # Feature ablation experiments
-python scripts/experiment.py            # default XGBoost, 5-fold
-python scripts/experiment.py --model nn --splits 3
+python scripts/experiment.py              # default 3-fold
+python scripts/experiment.py --splits 5
+
+# Run feature selection sweep
+python scripts/feature_selection.py
+
+# Evaluate model calibration
+python scripts/eval_calibration.py --plot --json
 
 # Export database tables to CSV
 python scripts/export_data.py
+
+# Dump/load database snapshots (used by CI)
+python scripts/dump_db.py
+python scripts/load_db.py
 
 # Launch the web app (http://localhost:5001)
 python webapp/app.py
@@ -55,27 +82,37 @@ python webapp/app.py
 ## Tests
 
 ```bash
-pytest tests/ -v
+pytest tests/ -v                  # full suite
+pytest tests/test_export.py -v    # single module
 ```
 
 ## Project Structure
 
 ```
-data/           SQLite cache (cache.db), pair builder, P&L tracking
-features/       Feature engineering pipeline (~295 features per matchup)
-models/         Training, benchmarking, prediction, saved model artifacts
-scripts/        CLI entry points — scrape, train, experiment, export
-webapp/         Flask web app — predictions, Kelly staking, P&L, Elo leaderboard
-tests/          Pytest test suite
-notebooks/      Analysis and exploration
-.planning/      GSD planning documents and codebase map
+data/              Scraper, pair builder, P&L tracking, cache.db
+features/          Feature engineering pipeline (~475 candidates → 150 selected)
+models/            XGBoost training, benchmarking, prediction, saved artifacts
+  trained/         Model artifacts (pkl, scaler, feature_names.json)
+scripts/           CLI entry points (scrape, train, fine-tune, experiment, export)
+webapp/            Flask web application (port 5001)
+tests/             Pytest test suite
+.github/workflows/ Nightly data fetch (scrapes new results, commits snapshot)
+.planning/         GSD planning documents and codebase map
 ```
+
+## CI / Automation
+
+A **nightly GitHub Actions workflow** runs at midnight UTC to:
+1. Restore the database from the committed snapshot (`data/db_snapshot.sql.gz`)
+2. Scrape the latest race results via `scripts/update_races.py`
+3. Dump and commit the updated snapshot
+
+This keeps the training data fresh without manual intervention. The workflow can also be triggered manually via `workflow_dispatch`.
 
 ## Betting Logic
 
 - Edge threshold: flag at >5%, act at >8%
 - Bet sizing: half Kelly, max 10% bankroll per bet
-- Confidence scaling: stakes reduced proportionally for low-confidence predictions
 - Bet placement is always manual on Pinnacle — no automated execution
 - CLV (closing line value) is the primary model validity signal
 
