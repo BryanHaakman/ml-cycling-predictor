@@ -192,33 +192,24 @@ def _invalidate_key_cache() -> None:
 # ---------------------------------------------------------------------------
 
 def _get_api_key() -> str:
-  """Resolve the Pinnacle auth token using the lookup chain.
+  """Resolve the static Pinnacle X-Api-Key via disk cache or JS bundle extraction.
 
-  Lookup order (per D-10):
-    1. PINNACLE_SESSION_COOKIE environment variable — manual override (D-05)
-    2. Session cache + adaptive TTL check via get_session_token() (D-07, D-09)
-    3. Playwright session acquisition via get_session_token() (D-01)
-    4. JS bundle extraction via _extract_key_from_bundle() (last resort)
-    5. All paths exhausted -> raise PinnacleAuthError
+  This returns the STATIC API key (embedded in the Pinnacle frontend JS bundle),
+  NOT the per-session token. The session token is handled separately by
+  data.session_manager and sent as the X-Session header.
+
+  Lookup order:
+    1. Disk cache (KEY_CACHE_PATH from previous JS bundle extraction)
+    2. JS bundle extraction from pinnacle.com
+    3. All paths exhausted -> raise PinnacleAuthError
 
   Returns:
-    The API key or session token string (stripped of whitespace).
+    The static API key string (stripped of whitespace).
 
   Raises:
     PinnacleAuthError: If all lookup paths are exhausted.
   """
-  # 1. Environment variable override (D-05 — highest priority escape hatch)
-  env_key = os.environ.get("PINNACLE_SESSION_COOKIE", "").strip()
-  if env_key:
-    return env_key
-
-  # 2+3. Session manager: cached token or Playwright acquisition (D-07, D-09, D-01)
-  from data.session_manager import get_session_token
-  session_token = get_session_token()
-  if session_token:
-    return session_token
-
-  # 4. Disk cache (existing .pinnacle_key_cache from JS bundle extraction)
+  # 1. Disk cache (from previous JS bundle extraction)
   if os.path.exists(KEY_CACHE_PATH):
     try:
       with open(KEY_CACHE_PATH, "r", encoding="utf-8") as f:
@@ -229,8 +220,8 @@ def _get_api_key() -> str:
     except OSError as e:
       log.warning("_get_api_key: could not read key cache: %s", e)
 
-  # 5. JS bundle extraction (last resort)
-  log.info("_get_api_key: no session token — attempting JS bundle extraction")
+  # 2. JS bundle extraction
+  log.info("_get_api_key: no cached key — attempting JS bundle extraction")
   extracted = _extract_key_from_bundle()
   if extracted:
     try:
@@ -241,11 +232,10 @@ def _get_api_key() -> str:
       log.warning("_get_api_key: could not write key cache: %s", e)
     return extracted
 
-  # 6. All paths exhausted
+  # 3. All paths exhausted
   raise PinnacleAuthError(
-    "Pinnacle API key could not be obtained. "
-    "Set the PINNACLE_SESSION_COOKIE environment variable as a manual override, "
-    "or add PINNACLE_USERNAME and PINNACLE_PASSWORD to .env for automated login."
+    "Pinnacle static API key could not be extracted from JS bundle. "
+    "This key is required alongside the session token for API access."
   )
 
 
@@ -332,6 +322,16 @@ def fetch_cycling_h2h_markets() -> list:
     requests.RequestException: On network errors (timeout, connection failure).
   """
   api_key = _get_api_key()
+
+  # Get session token: env var override (D-05) or session manager (D-01, D-09)
+  env_session = os.environ.get("PINNACLE_SESSION_COOKIE", "").strip()
+  if env_session:
+    session_token = env_session
+    log.info("fetch_cycling_h2h_markets: using PINNACLE_SESSION_COOKIE env var override")
+  else:
+    from data.session_manager import get_session_token
+    session_token = get_session_token()
+
   retried = False
 
   while True:
@@ -340,7 +340,6 @@ def fetch_cycling_h2h_markets() -> list:
       "Referer": PINNACLE_HOME_URL,
       "Accept": "application/json",
     }
-    session_token = os.environ.get("PINNACLE_SESSION", "").strip()
     if session_token:
       headers["X-Session"] = session_token
 
@@ -371,8 +370,11 @@ def fetch_cycling_h2h_markets() -> list:
         from data.session_manager import invalidate_session
         invalidate_session()
         api_key = _get_api_key()
+        # Re-acquire session token after invalidation
+        from data.session_manager import get_session_token as _get_fresh_session
+        session_token = _get_fresh_session()
         retried = True
-        continue  # retry with fresh key
+        continue  # retry with fresh key + session
 
       _check_auth(leagues_resp)
 

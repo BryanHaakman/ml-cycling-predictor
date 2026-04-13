@@ -148,10 +148,18 @@ def acquire_session_token(headless: bool = True) -> str:
 
   captured_token: dict = {}
 
+  def on_request(request) -> None:
+    """Capture x-session from outgoing request headers to Pinnacle API."""
+    if "arcadia.pinnacle.com" in request.url:
+      session = request.headers.get("x-session")
+      if session:
+        captured_token["value"] = session
+
   with sync_playwright() as p:
     browser = p.chromium.launch(headless=headless)
     context = browser.new_context()
     page = context.new_page()
+    page.on("request", on_request)
 
     # Navigate directly to cycling matchups (token captured from any page's login)
     page.goto(PINNACLE_HOME_URL + "en/cycling/matchups/")
@@ -169,48 +177,52 @@ def acquire_session_token(headless: bool = True) -> str:
     # Click header "LOG IN" — opens login modal with pre-filled credentials
     page.get_by_role("button", name="Log In").first.click()
 
-    # Click "I am fit for play" in the modal (custom UI element, not a standard checkbox)
-    page.get_by_text("I am fit for play").click(timeout=10000)
+    # Check the "I am fit for play" checkbox in the modal
+    try:
+      # Try the checkbox input first (the square), then fall back to text label
+      checkbox = page.get_by_role("checkbox", name="I am fit for play")
+      if checkbox.count() > 0:
+        checkbox.check(timeout=10000)
+      else:
+        # Fall back to clicking the label/text which may also toggle the checkbox
+        page.get_by_text("I am fit for play").click(timeout=10000)
+    except PlaywrightTimeoutError:
+      browser.close()
+      raise CaptchaOrMfaDetected(
+        "'I am fit for play' checkbox not found — headless mode may not render the login modal"
+      )
 
     # Click the modal's "Log In" submit button
     # Use the last "Log In" button (modal submit, not header)
-    page.get_by_role("button", name="Log In").last.click()
+    try:
+      page.get_by_role("button", name="Log In").last.click()
+    except PlaywrightTimeoutError:
+      browser.close()
+      raise CaptchaOrMfaDetected(
+        "Modal 'Log In' button not found — headless mode may not render the login modal"
+      )
 
-    # Poll for the "token" cookie — login + GeoComply verification takes time
+    # Poll for x-session header in outgoing requests — login + GeoComply takes time
     max_wait_ms = 30000
     poll_interval_ms = 1000
     elapsed = 0
-    while elapsed < max_wait_ms:
-      cookies = context.cookies()
-      for cookie in cookies:
-        if cookie["name"] == "token" and "pinnacle" in cookie["domain"].lower():
-          captured_token["value"] = cookie["value"]
-          log.info(
-            "acquire_session_token: token extracted from cookie %r on %s (after %ds)",
-            cookie["name"], cookie["domain"], elapsed // 1000,
-          )
-          break
-      if captured_token.get("value"):
-        break
+    while elapsed < max_wait_ms and not captured_token.get("value"):
       page.wait_for_timeout(poll_interval_ms)
       elapsed += poll_interval_ms
 
-    if not captured_token.get("value"):
-      # Final fallback: check for any session-like cookie
-      cookies = context.cookies()
-      for cookie in cookies:
-        if "session" in cookie["name"].lower() and "pinnacle" in cookie["domain"].lower():
-          captured_token["value"] = cookie["value"]
-          log.info("acquire_session_token: token extracted from fallback cookie %r", cookie["name"])
-          break
+    if captured_token.get("value"):
+      log.info(
+        "acquire_session_token: x-session captured from outgoing request (after %ds)",
+        elapsed // 1000,
+      )
 
     browser.close()
 
   if not captured_token.get("value"):
     from data.odds import PinnacleAuthError
     raise PinnacleAuthError(
-      "Playwright login appeared to succeed but no session token cookie was found. "
-      "Check browser cookies after login."
+      "Playwright login completed but no x-session header was captured from API requests. "
+      "The login may have failed silently or GeoComply verification timed out."
     )
 
   token = captured_token["value"]
