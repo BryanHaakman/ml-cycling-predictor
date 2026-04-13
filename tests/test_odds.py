@@ -134,6 +134,85 @@ class TestGetApiKey(unittest.TestCase):
           self.assertIn("PINNACLE_SESSION_COOKIE", str(ctx.exception))
 
 
+class TestGetApiKeyWithSessionManager(unittest.TestCase):
+  """Tests for _get_api_key() with session manager integration (D-10)."""
+
+  def test_session_manager_used_when_env_absent(self):
+    """No env var -> get_session_token() called and its result returned."""
+    env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
+    with patch.dict(os.environ, env, clear=True):
+      with patch("data.session_manager.get_session_token", return_value="playwright_token") as mock_st:
+        key = _get_api_key()
+        mock_st.assert_called_once()
+        self.assertEqual(key, "playwright_token")
+
+  def test_env_var_bypasses_session_manager(self):
+    """PINNACLE_SESSION_COOKIE set -> get_session_token() never called (D-05)."""
+    with patch.dict(os.environ, {"PINNACLE_SESSION_COOKIE": "manual_key"}):
+      with patch("data.session_manager.get_session_token") as mock_st:
+        key = _get_api_key()
+        mock_st.assert_not_called()
+        self.assertEqual(key, "manual_key")
+
+  def test_falls_through_to_bundle_when_session_manager_returns_none(self):
+    """get_session_token() returns None -> JS bundle extraction attempted."""
+    env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
+    with patch.dict(os.environ, env, clear=True):
+      with patch("data.session_manager.get_session_token", return_value=None):
+        with patch("data.odds.KEY_CACHE_PATH", "/nonexistent/cache"):
+          with patch("data.odds._extract_key_from_bundle", return_value="bundle_key") as mock_extract:
+            with patch("builtins.open", mock_open()):
+              key = _get_api_key()
+              mock_extract.assert_called_once()
+              self.assertEqual(key, "bundle_key")
+
+  def test_error_message_mentions_both_env_and_dotenv(self):
+    """PinnacleAuthError message mentions both PINNACLE_SESSION_COOKIE and .env."""
+    env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
+    with patch.dict(os.environ, env, clear=True):
+      with patch("data.session_manager.get_session_token", return_value=None):
+        with patch("data.odds.KEY_CACHE_PATH", "/nonexistent/cache"):
+          with patch("data.odds._extract_key_from_bundle", return_value=None):
+            with self.assertRaises(PinnacleAuthError) as ctx:
+              _get_api_key()
+            error_msg = str(ctx.exception)
+            self.assertIn("PINNACLE_SESSION_COOKIE", error_msg)
+            self.assertIn(".env", error_msg)
+
+
+class TestInvalidateSessionOn401(unittest.TestCase):
+  """Tests that invalidate_session() is called on 401/403 retry (D-12)."""
+
+  def test_401_calls_invalidate_session(self):
+    """On 401 during fetch, invalidate_session() called alongside _invalidate_key_cache()."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch.dict(os.environ, {"PINNACLE_SESSION_COOKIE": "initialkey"}):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("data.odds._extract_key_from_bundle", return_value="newkey"):
+            with patch("requests.get") as mock_get:
+              auth_fail_resp = MagicMock()
+              auth_fail_resp.status_code = 401
+              auth_fail_resp.json.return_value = {"status": 401}
+
+              leagues_resp = MagicMock()
+              leagues_resp.status_code = 200
+              leagues_resp.json.return_value = []
+
+              mock_get.side_effect = [auth_fail_resp, leagues_resp]
+
+              with patch("data.odds._invalidate_key_cache") as mock_inv_cache:
+                with patch("data.session_manager.invalidate_session") as mock_inv_session:
+                  result = fetch_cycling_h2h_markets()
+                  mock_inv_cache.assert_called_once()
+                  mock_inv_session.assert_called_once()
+                  self.assertEqual(result, [])
+    finally:
+      os.unlink(tmp_path)
+
+
 class TestCheckAuth(unittest.TestCase):
   """Tests for _check_auth()."""
 

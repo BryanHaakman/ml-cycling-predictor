@@ -192,26 +192,33 @@ def _invalidate_key_cache() -> None:
 # ---------------------------------------------------------------------------
 
 def _get_api_key() -> str:
-  """Resolve the X-Api-Key using the lookup chain: env var -> cache -> JS bundle.
+  """Resolve the Pinnacle auth token using the lookup chain.
 
-  Lookup order (per CONTEXT.md D-13, D-14, D-16):
-    1. PINNACLE_SESSION_COOKIE environment variable — if set, return immediately
-    2. KEY_CACHE_PATH disk cache — if file exists and is non-empty, return contents
-    3. _extract_key_from_bundle() — if returns a key, write to cache and return it
-    4. All paths exhausted -> raise PinnacleAuthError
+  Lookup order (per D-10):
+    1. PINNACLE_SESSION_COOKIE environment variable — manual override (D-05)
+    2. Session cache + adaptive TTL check via get_session_token() (D-07, D-09)
+    3. Playwright session acquisition via get_session_token() (D-01)
+    4. JS bundle extraction via _extract_key_from_bundle() (last resort)
+    5. All paths exhausted -> raise PinnacleAuthError
 
   Returns:
-    The API key string (stripped of whitespace).
+    The API key or session token string (stripped of whitespace).
 
   Raises:
     PinnacleAuthError: If all lookup paths are exhausted.
   """
-  # 1. Environment variable (highest priority)
+  # 1. Environment variable override (D-05 — highest priority escape hatch)
   env_key = os.environ.get("PINNACLE_SESSION_COOKIE", "").strip()
   if env_key:
     return env_key
 
-  # 2. Disk cache
+  # 2+3. Session manager: cached token or Playwright acquisition (D-07, D-09, D-01)
+  from data.session_manager import get_session_token
+  session_token = get_session_token()
+  if session_token:
+    return session_token
+
+  # 4. Disk cache (existing .pinnacle_key_cache from JS bundle extraction)
   if os.path.exists(KEY_CACHE_PATH):
     try:
       with open(KEY_CACHE_PATH, "r", encoding="utf-8") as f:
@@ -222,8 +229,8 @@ def _get_api_key() -> str:
     except OSError as e:
       log.warning("_get_api_key: could not read key cache: %s", e)
 
-  # 3. JS bundle extraction
-  log.info("_get_api_key: no env var or cache — attempting JS bundle extraction")
+  # 5. JS bundle extraction (last resort)
+  log.info("_get_api_key: no session token — attempting JS bundle extraction")
   extracted = _extract_key_from_bundle()
   if extracted:
     try:
@@ -234,10 +241,11 @@ def _get_api_key() -> str:
       log.warning("_get_api_key: could not write key cache: %s", e)
     return extracted
 
-  # 4. All paths exhausted
+  # 6. All paths exhausted
   raise PinnacleAuthError(
-    "Pinnacle API key could not be extracted. "
-    "Set the PINNACLE_SESSION_COOKIE environment variable as a manual override."
+    "Pinnacle API key could not be obtained. "
+    "Set the PINNACLE_SESSION_COOKIE environment variable as a manual override, "
+    "or add PINNACLE_USERNAME and PINNACLE_PASSWORD to .env for automated login."
   )
 
 
@@ -360,6 +368,8 @@ def fetch_cycling_h2h_markets() -> list:
           leagues_resp.status_code,
         )
         _invalidate_key_cache()
+        from data.session_manager import invalidate_session
+        invalidate_session()
         api_key = _get_api_key()
         retried = True
         continue  # retry with fresh key
