@@ -889,3 +889,25 @@ Key observations:
 - Top features: `diff_career_top10_rate` (11.4%), `interact_diff_quality_x_form` (6.3%), `interact_diff_sprint_x_flat` (2.0%)
 
 **Conclusion:** 150 features is the sweet spot. Made this the default in `train.py --select-features 150`. Reduces model complexity by 68% with no accuracy loss. Also removed non-XGBoost models (LR, RF, NN) from the repo — none beat XGBoost in prior experiments.
+
+---
+
+## 2026-04-13 — Upstream merge (lewis-mcgillion/cycling-predictor through 2026-04-13)
+
+**Hypothesis:** Sync PaceIQ fork with upstream to incorporate ML improvements made in parallel (variance features, feature selection, fine-tuning infrastructure, post-processing experiments).
+
+**Method:** `git remote add upstream` + `git merge upstream/main`. Resolved 4 conflicts: kept our `db_snapshot.sql.gz`, merged both `decision_log.md` entry sets, combined `README.md` retaining PaceIQ branding + upstream CI docs, kept both `seed` and `since_date` params in `build_pairs_sampled`.
+
+**Changes incorporated from upstream:**
+- Variance features (17 new) in `features/rider_features.py`
+- Feature selection default: top 150 by permutation importance in `scripts/train.py`
+- Post-processing probability adjustment experiments (non-production, reference only)
+- Incremental warm-start fine-tuning script: `scripts/fine_tune.py`
+- Calibration evaluation script: `scripts/eval_calibration.py`
+- `models/neural_net.py` deleted (upstream removed non-XGBoost models)
+- `since_date` param added to `build_pairs_sampled()` in `data/builder.py`
+- Nightly CI workflow documentation
+
+**Results:** Merge committed as e69b613. No training run performed — pipeline changes require review before retraining.
+
+**Conclusion:** Upstream ML improvements are now integrated. Items to address: multi-model support in `models/benchmark.py` (upstream stripped to XGBoost-only, conflicts with our CalibratedXGBoost-first approach), and validation that feature selection default (150) is compatible with our full pipeline including Pinnacle batch predictions.
