@@ -80,7 +80,10 @@ Plans:
   2. Any auto-populated field (stage detail, rider selection, odds value) remains individually editable after population; editing a field does not trigger a reload or reset other fields
   3. Pairs with unresolved riders show the existing rider autocomplete search in the unresolved cell, allowing the user to manually complete the match before running predictions
   4. User can click "Refresh Odds" in an already-loaded session; only odds fields tagged data-source="auto" are updated — cells the user has manually edited (data-source="user") are not overwritten, and stage context and rider selections are preserved
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 05-01-PLAN.md — Pinnacle control row HTML/CSS + loadFromPinnacle() + populatePinnacleRace() with race picker, stage population, pair creation, and unresolved rider handling
+- [ ] 05-02-PLAN.md — refreshOdds() with data-source dirty tracking + human verification checkpoint
 **UI hint**: yes
 
 ## Progress
@@ -94,4 +97,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Name Resolver | 0/2 | Planned | - |
 | 3. Stage Context Fetcher | 0/2 | Planned | - |
 | 4. Flask Endpoint Wiring | 1/1 | Complete   | 2026-04-12 |
-| 5. Frontend Integration | 0/TBD | Not started | - |
+| 5. Frontend Integration | 0/2 | Planned | - |
