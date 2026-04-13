@@ -2,17 +2,29 @@
 
 ML-powered prediction of head-to-head cycling race outcomes. Given two riders and a race profile, the system predicts which rider will finish ahead — mirroring cycling betting markets (e.g., "Pogačar vs Vingegaard in Stage 14").
 
-The pipeline scrapes historical results from ProCyclingStats, engineers ~475 features per matchup, selects the top 150 by importance, trains a Calibrated XGBoost model, and serves predictions through a Flask web app with Kelly Criterion staking advice and P&L tracking.
+The pipeline scrapes historical results from ProCyclingStats, engineers ~475 candidate features per matchup, selects the top 150 by permutation importance, and trains a Calibrated XGBoost model. Predictions are served through a Flask web app with Kelly Criterion staking advice and P&L tracking.
+
+**Current model performance** (time-based split, test years 2025–2026):
+
+| Model | Accuracy | ROC-AUC | Brier Score |
+|-------|----------|---------|-------------|
+| CalibratedXGBoost | 70.0% | 0.774 | 0.194 |
+| XGBoost | 69.8% | 0.771 | 0.194 |
 
 ## How It Works
 
 **Scrape → Build H2H Pairs → Engineer Features → Select Top 150 → Train Model → Serve Predictions**
 
 1. **Scraper** pulls race results from ProCyclingStats into a local SQLite database (`data/cache.db`)
-2. **Builder** generates head-to-head training pairs from race results
-3. **Feature pipeline** computes ~475 candidate features per matchup (rider form, consistency, race profile, terrain affinity, H2H history, interactions, etc.)
-4. **Feature selection** ranks features by permutation importance and keeps the top 150 (eliminates noise from low-signal features)
-5. **Training** trains XGBoost and Calibrated XGBoost (isotonic calibration for well-calibrated probabilities)
+2. **Builder** generates head-to-head training pairs from race results (top-50 finishers, up to 200 pairs per stage, random A/B swap to prevent ordering bias)
+3. **Feature pipeline** computes ~475 candidate features per matchup across 6 categories:
+   - **Rider features** (×2): form, consistency, terrain affinity, career stats, variance metrics (138 per rider)
+   - **Race features**: profile, distance, elevation, race tier (20 features)
+   - **Diff features**: A minus B differences for key rider stats
+   - **Interaction features**: cross-terms (e.g., sprint ability × flat race)
+   - **H2H features**: historical head-to-head record between the pair
+4. **Feature selection** trains a throwaway XGBoost on all features, ranks by permutation importance, and keeps the top 150 (eliminates noise — accuracy improves slightly vs using all 475)
+5. **Training** trains XGBoost and Calibrated XGBoost (isotonic calibration via `CalibratedClassifierCV` with 5-fold CV)
 6. **Web app** serves predictions with Kelly Criterion staking advice, a results browser, and P&L tracking
 
 ## Setup
@@ -34,15 +46,19 @@ python scripts/scrape_all.py
 # Incremental update — fetch new races since last scrape
 python scripts/update_races.py
 
-# Train models (builds pairs, engineers features, trains XGBoost)
+# Train models (builds pairs, engineers features, selects top 150, trains XGBoost)
 python scripts/train.py
+python scripts/train.py --select-features 200  # override feature count
 
-# Incremental fine-tune on new data (faster than full retrain)
+# Incremental fine-tune on new data (warm-start, faster than full retrain)
 python scripts/fine_tune.py
 
 # Run feature ablation experiments
 python scripts/experiment.py              # default 3-fold
 python scripts/experiment.py --splits 5
+
+# Run feature selection sweep
+python scripts/feature_selection.py
 
 # Evaluate model calibration
 python scripts/eval_calibration.py --plot --json
@@ -50,8 +66,12 @@ python scripts/eval_calibration.py --plot --json
 # Export database tables to CSV
 python scripts/export_data.py
 
-# Precompute features to parquet cache
+# Precompute features to parquet cache (speeds up training)
 python scripts/precompute_features.py
+
+# Dump/load database snapshots (used by CI)
+python scripts/dump_db.py
+python scripts/load_db.py
 
 # Launch the web app (http://localhost:5001)
 python webapp/app.py
@@ -60,17 +80,28 @@ python webapp/app.py
 ## Tests
 
 ```bash
-pytest tests/ -v                  # full suite
+pytest tests/ -v                  # full suite (11 tests)
 pytest tests/test_export.py -v    # single module
 ```
 
 ## Project Structure
 
 ```
-data/           Scraper, pair builder, P&L tracking, cache.db
-features/       Feature engineering pipeline (~475 candidates → 150 selected)
-models/         XGBoost training, benchmarking, prediction, saved artifacts
-scripts/        CLI entry points (scrape, train, fine-tune, experiment, export)
-webapp/         Flask web application
-tests/          Pytest test suite
+data/              Scraper, pair builder, P&L tracking, cache.db
+features/          Feature engineering pipeline (~475 candidates → 150 selected)
+models/            XGBoost training, benchmarking, prediction, saved artifacts
+  trained/         Model artifacts (pkl, scaler, feature_names.json)
+scripts/           CLI entry points (scrape, train, fine-tune, experiment, export)
+webapp/            Flask web application (port 5001)
+tests/             Pytest test suite
+.github/workflows/ Nightly data fetch (scrapes new results, commits snapshot)
 ```
+
+## CI / Automation
+
+A **nightly GitHub Actions workflow** runs at midnight UTC to:
+1. Restore the database from the committed snapshot (`data/db_snapshot.sql.gz`)
+2. Scrape the latest race results via `scripts/update_races.py`
+3. Dump and commit the updated snapshot
+
+This keeps the training data fresh without manual intervention. The workflow can also be triggered manually via `workflow_dispatch`.
