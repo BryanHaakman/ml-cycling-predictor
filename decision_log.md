@@ -711,3 +711,79 @@ Future accuracy improvements should focus on:
 - Data quality (scraper coverage gaps, missing rider stats)
 
 All experiment code retained in `models/` and `scripts/nn_experiments.py` for reproducibility. No changes to the production pipeline — CalibratedXGBoost remains the default model.
+
+---
+
+## 2026-04-13 — Rider Variance Features + Retrain
+
+**Hypothesis:** Adding rider consistency/volatility features (stddev, IQR, CV, range of historical results) will provide new signal about how predictable a rider is, potentially improving AUC.
+
+**Method:** Added 17 new variance features to `features/rider_features.py`:
+- Career: `career_rank_stddev`, `career_rank_iqr`, `career_pcs_stddev`, `career_rank_cv`
+- Form windows: `form_{30d,60d,90d,180d}_rank_stddev`
+- Recent race windows: `form_last{5,10,20}_rank_stddev`, `form_last{5,10,20}_rank_range`
+- Course-type: `course_{flat,hilly,mountain}_rank_stddev`
+
+Retrained XGBoost with all features (~460 total, up from 423). Same train/test split.
+
+**Results:**
+| Config | Accuracy | ROC-AUC | Brier | ECE |
+|--------|----------|---------|-------|-----|
+| Baseline (423 features) | 0.6980 | 0.7733 | 0.1938 | 0.0105 |
+| + Variance features (460) | 0.6981 | 0.7708 | 0.1947 | 0.0102 |
+
+Variance features ARE used by XGBoost: `diff_career_rank_iqr` rank 17, `diff_career_rank_stddev` rank 20 in feature importance. But overall AUC slightly decreased (within ±0.003 noise).
+
+**Conclusion:** Variance features provide useful information about rider consistency (XGBoost selects them) but do not improve prediction accuracy. The features are retained because they enable the post-processing variance model (σ estimation). No standalone accuracy benefit.
+
+---
+
+## 2026-04-13 — Post-Processing Probability Adjustments (Comprehensive Experiment)
+
+**Hypothesis:** Adding a post-processing layer on top of CalibratedXGBoost — with variance-aware Φ-adjustment, Bayesian uncertainty, upset injection, extreme shrinkage, and alternative calibration methods — could improve Brier score and calibration.
+
+**Framework:** P(A>B) = Φ(Φ⁻¹(P_raw) / √(1 + σA² + σB² + τA² + τB²))
+- σ: race-day variance from rider rank_stddev + course type
+- τ: epistemic uncertainty = scale/√(n_recent + κ)
+- ε: chaos probability, applied as mixture (1-ε)·P + ε·0.5
+
+**Method:** Built `models/post_processing.py` (ProbabilityAdjuster class) and `scripts/eval_post_processing.py`. Tested 13 configurations on 57,800 test pairs:
+- Calibration methods: temperature scaling, Platt scaling, beta calibration
+- Individual components: variance-only, Bayesian-only, upset-only, shrinkage-only
+- Combined: variance+Bayesian, full pipeline, full+temperature
+- Parameter variants: conservative σ, aggressive ε
+
+Calibration parameters (temperature T, Platt a/b, beta a/b/c) fitted on 30% held-out calibration set from training data.
+
+**Results:**
+| Config | Accuracy | AUC | Brier | ΔECE | ΔBrier |
+|--------|----------|-----|-------|------|--------|
+| **baseline_raw** | **0.6982** | **0.7720** | **0.1943** | **—** | **—** |
+| temperature_scaling | 0.6982 | 0.7720 | 0.1943 | −0.0000 | +0.0000 |
+| shrinkage_only | 0.6982 | 0.7720 | 0.1943 | +0.0000 | +0.0000 |
+| bayesian_only | 0.6982 | 0.7720 | 0.1943 | +0.0004 | +0.0000 |
+| upset_only | 0.6982 | 0.7720 | 0.1945 | +0.0073 | +0.0003 |
+| platt_scaling | 0.6982 | 0.7720 | 0.1955 | +0.0253 | +0.0013 |
+| beta_calibration | 0.6980 | 0.7720 | 0.1955 | +0.0259 | +0.0013 |
+| variance_only | 0.6982 | 0.7717 | 0.1971 | +0.0354 | +0.0028 |
+| variance_plus_bayesian | 0.6982 | 0.7717 | 0.1971 | +0.0357 | +0.0029 |
+| full_pipeline | 0.6982 | 0.7717 | 0.1979 | +0.0419 | +0.0037 |
+| full_with_temperature | 0.6982 | 0.7717 | 0.1979 | +0.0419 | +0.0037 |
+| aggressive_epsilon | 0.6982 | 0.7716 | 0.1986 | +0.0462 | +0.0044 |
+| conservative_sigma | 0.6982 | 0.7713 | 0.2028 | +0.0673 | +0.0085 |
+
+Key findings:
+- **Temperature ≈ 1.0** — confirms model is already well-calibrated
+- **Isotonic calibration (in CalibratedClassifierCV) is near-optimal** — ECE=0.0095, reliability=0.00016
+- **All adjustments degrade calibration** — variance-based Φ-adjustment is the worst offender, pushing predictions toward 0.5 when they're already correctly distributed
+- **Platt and beta calibration are worse than isotonic** — the non-parametric isotonic approach better captures the true calibration mapping
+- **Extreme shrinkage has no effect** — the model doesn't produce many extreme predictions that need capping
+
+**Conclusion:** The CalibratedXGBoost with isotonic regression is **already near-optimally calibrated**. Post-processing adjustments are counterproductive — they add noise to a well-calibrated output. The Φ-framework is mathematically sound but assumes the base model is uncalibrated; since isotonic regression already handles calibration, layering additional adjustments on top hurts rather than helps.
+
+**Implications for future work:**
+- Do NOT add a post-processing layer to the production pipeline
+- The `models/post_processing.py` module is retained for reference but should not be used in production
+- Kelly staking could still benefit from uncertainty estimates (τ) for position sizing, even though the probabilities themselves don't need adjustment
+- Accuracy improvements must come from better features or data, not from post-prediction adjustments
+- The model's weak spot is discrimination (AUC 0.772), not calibration (ECE 0.010)

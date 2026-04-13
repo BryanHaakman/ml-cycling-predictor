@@ -173,6 +173,13 @@ def compute_rider_features(
         features["career_avg_pcs_pts"] = np.mean(pcs_pts)
         features["career_avg_uci_pts"] = np.mean(uci_pts)
 
+        # --- Variance / consistency features ---
+        features["career_rank_stddev"] = float(np.std(ranks)) if len(ranks) >= 3 else 25.0
+        features["career_rank_iqr"] = float(np.percentile(ranks, 75) - np.percentile(ranks, 25)) if len(ranks) >= 4 else 30.0
+        features["career_pcs_stddev"] = float(np.std(pcs_pts)) if len(ranks) >= 3 else 0.0
+        avg_r = np.mean(ranks)
+        features["career_rank_cv"] = float(np.std(ranks) / avg_r) if avg_r > 0 and len(ranks) >= 3 else 1.0
+
         # Recent form (last 30/60/90 days and last 5/10/20 races)
         for window_name, window_days in [("30d", 30), ("60d", 60), ("90d", 90), ("180d", 180)]:
             cutoff = (datetime.fromisoformat(race_date) - timedelta(days=window_days)).isoformat()
@@ -184,6 +191,7 @@ def compute_rider_features(
             features[f"form_{window_name}_wins"] = sum(1 for r in w_ranks if r == 1)
             features[f"form_{window_name}_top10"] = sum(1 for r in w_ranks if r <= 10)
             features[f"form_{window_name}_avg_pcs"] = np.mean(w_pcs) if w_pcs else 0.0
+            features[f"form_{window_name}_rank_stddev"] = float(np.std(w_ranks)) if len(w_ranks) >= 3 else 25.0
 
         for n_name, n_races in [("last5", 5), ("last10", 10), ("last20", 20)]:
             recent = past_results[:n_races]
@@ -192,6 +200,8 @@ def compute_rider_features(
             features[f"form_{n_name}_avg_rank"] = np.mean(r_ranks) if r_ranks else 50.0
             features[f"form_{n_name}_best_rank"] = min(r_ranks) if r_ranks else 50
             features[f"form_{n_name}_avg_pcs"] = np.mean(r_pcs) if r_pcs else 0.0
+            features[f"form_{n_name}_rank_stddev"] = float(np.std(r_ranks)) if len(r_ranks) >= 3 else 25.0
+            features[f"form_{n_name}_rank_range"] = float(max(r_ranks) - min(r_ranks)) if r_ranks else 50.0
 
         # One-day race form (excludes noisy stage race results)
         oneday_results = [r for r in past_results if r["is_one_day_race"]]
@@ -228,6 +238,7 @@ def compute_rider_features(
                 sum(1 for r in cr_ranks if r <= 10) / len(cr_ranks)
                 if cr_ranks else 0.0
             )
+            features[f"course_{course_name}_rank_stddev"] = float(np.std(cr_ranks)) if len(cr_ranks) >= 3 else 25.0
             # Recent course-type form (90d / 180d)
             for window_name, window_days in [("90d", 90), ("180d", 180)]:
                 cutoff = (datetime.fromisoformat(race_date) - timedelta(days=window_days)).isoformat()
@@ -371,6 +382,10 @@ def compute_rider_features(
         features["career_top10_rate"] = 0.0
         features["career_avg_pcs_pts"] = 0.0
         features["career_avg_uci_pts"] = 0.0
+        features["career_rank_stddev"] = 25.0
+        features["career_rank_iqr"] = 30.0
+        features["career_pcs_stddev"] = 0.0
+        features["career_rank_cv"] = 1.0
 
         for w in ["30d", "60d", "90d", "180d"]:
             features[f"form_{w}_races"] = 0
@@ -378,11 +393,14 @@ def compute_rider_features(
             features[f"form_{w}_wins"] = 0
             features[f"form_{w}_top10"] = 0
             features[f"form_{w}_avg_pcs"] = 0.0
+            features[f"form_{w}_rank_stddev"] = 25.0
 
         for n in ["last5", "last10", "last20"]:
             features[f"form_{n}_avg_rank"] = 50.0
             features[f"form_{n}_best_rank"] = 50
             features[f"form_{n}_avg_pcs"] = 0.0
+            features[f"form_{n}_rank_stddev"] = 25.0
+            features[f"form_{n}_rank_range"] = 50.0
 
         for w in ["30d", "90d", "180d"]:
             features[f"od_form_{w}_races"] = 0
@@ -397,6 +415,7 @@ def compute_rider_features(
             features[f"course_{course}_races"] = 0
             features[f"course_{course}_avg_rank"] = 50.0
             features[f"course_{course}_top10_rate"] = 0.0
+            features[f"course_{course}_rank_stddev"] = 25.0
             for w in ["90d", "180d"]:
                 features[f"course_{course}_{w}_races"] = 0
                 features[f"course_{course}_{w}_avg_rank"] = 50.0
@@ -439,27 +458,28 @@ RIDER_FEATURE_NAMES = [
     "career_wins", "career_podiums", "career_top10",
     "career_win_rate", "career_podium_rate", "career_top10_rate",
     "career_avg_pcs_pts", "career_avg_uci_pts",
-    "form_30d_races", "form_30d_avg_rank", "form_30d_wins", "form_30d_top10", "form_30d_avg_pcs",
-    "form_60d_races", "form_60d_avg_rank", "form_60d_wins", "form_60d_top10", "form_60d_avg_pcs",
-    "form_90d_races", "form_90d_avg_rank", "form_90d_wins", "form_90d_top10", "form_90d_avg_pcs",
-    "form_180d_races", "form_180d_avg_rank", "form_180d_wins", "form_180d_top10", "form_180d_avg_pcs",
-    "form_last5_avg_rank", "form_last5_best_rank", "form_last5_avg_pcs",
-    "form_last10_avg_rank", "form_last10_best_rank", "form_last10_avg_pcs",
-    "form_last20_avg_rank", "form_last20_best_rank", "form_last20_avg_pcs",
+    "career_rank_stddev", "career_rank_iqr", "career_pcs_stddev", "career_rank_cv",
+    "form_30d_races", "form_30d_avg_rank", "form_30d_wins", "form_30d_top10", "form_30d_avg_pcs", "form_30d_rank_stddev",
+    "form_60d_races", "form_60d_avg_rank", "form_60d_wins", "form_60d_top10", "form_60d_avg_pcs", "form_60d_rank_stddev",
+    "form_90d_races", "form_90d_avg_rank", "form_90d_wins", "form_90d_top10", "form_90d_avg_pcs", "form_90d_rank_stddev",
+    "form_180d_races", "form_180d_avg_rank", "form_180d_wins", "form_180d_top10", "form_180d_avg_pcs", "form_180d_rank_stddev",
+    "form_last5_avg_rank", "form_last5_best_rank", "form_last5_avg_pcs", "form_last5_rank_stddev", "form_last5_rank_range",
+    "form_last10_avg_rank", "form_last10_best_rank", "form_last10_avg_pcs", "form_last10_rank_stddev", "form_last10_rank_range",
+    "form_last20_avg_rank", "form_last20_best_rank", "form_last20_avg_pcs", "form_last20_rank_stddev", "form_last20_rank_range",
     "od_form_30d_races", "od_form_30d_avg_rank", "od_form_30d_top10",
     "od_form_90d_races", "od_form_90d_avg_rank", "od_form_90d_top10",
     "od_form_180d_races", "od_form_180d_avg_rank", "od_form_180d_top10",
     "od_form_last3_avg_rank", "od_form_last3_best_rank",
     "od_form_last5_avg_rank", "od_form_last5_best_rank",
-    "course_flat_races", "course_flat_avg_rank", "course_flat_top10_rate",
+    "course_flat_races", "course_flat_avg_rank", "course_flat_top10_rate", "course_flat_rank_stddev",
     "course_flat_90d_races", "course_flat_90d_avg_rank",
     "course_flat_180d_races", "course_flat_180d_avg_rank",
     "course_flat_od_races", "course_flat_od_avg_rank",
-    "course_hilly_races", "course_hilly_avg_rank", "course_hilly_top10_rate",
+    "course_hilly_races", "course_hilly_avg_rank", "course_hilly_top10_rate", "course_hilly_rank_stddev",
     "course_hilly_90d_races", "course_hilly_90d_avg_rank",
     "course_hilly_180d_races", "course_hilly_180d_avg_rank",
     "course_hilly_od_races", "course_hilly_od_avg_rank",
-    "course_mountain_races", "course_mountain_avg_rank", "course_mountain_top10_rate",
+    "course_mountain_races", "course_mountain_avg_rank", "course_mountain_top10_rate", "course_mountain_rank_stddev",
     "course_mountain_90d_races", "course_mountain_90d_avg_rank",
     "course_mountain_180d_races", "course_mountain_180d_avg_rank",
     "course_mountain_od_races", "course_mountain_od_avg_rank",

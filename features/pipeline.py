@@ -508,7 +508,7 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
     cache_misses = 0
     total = len(pairs_df)
 
-    for i, (_, pair) in enumerate(tqdm(pairs_df.iterrows(), total=total, desc="Building feature matrix")):
+    for i, (pair_idx, pair) in enumerate(tqdm(pairs_df.iterrows(), total=total, desc="Building feature matrix")):
         stage_url = pair["stage_url"]
         rider_a_url = pair["rider_a_url"]
         rider_b_url = pair["rider_b_url"]
@@ -647,6 +647,7 @@ def build_feature_matrix(pairs_df: pd.DataFrame, db_path: str = DB_PATH) -> pd.D
         row = [features.get(name, 0.0) for name in feature_names]
         row.append(pair["label"])
         rows.append(row)
+
 
         if (i + 1) % 5000 == 0:
             log.info(f"  Progress: {i+1}/{total} pairs, {len(rows)} kept, {skipped} skipped")
