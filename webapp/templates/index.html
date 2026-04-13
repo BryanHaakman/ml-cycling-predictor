@@ -242,6 +242,21 @@
             .batch-pair-row .form-group:nth-child(3),
             .batch-pair-row .form-group:nth-child(4) { }
         }
+
+        .pinnacle-row {
+            display: flex;
+            gap: 0.5rem;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .unresolved-rider input,
+        .unresolved-rider .autocomplete-wrap > input {
+            border-color: #ff9800;
+        }
     </style>
 </head>
 <body>
@@ -400,6 +415,22 @@
 
     <!-- ── Batch Mode ────────────────────────────────────────────── -->
     <div id="batch-mode" style="display:none;">
+        <div class="pinnacle-row">
+            <div class="form-group" style="flex:0 0 auto;">
+                <label style="visibility:hidden;">Action</label>
+                <button class="btn" id="load-pinnacle-btn" onclick="loadFromPinnacle()">Load from Pinnacle</button>
+            </div>
+            <div class="form-group" id="pinnacle-race-picker" style="display:none;flex:1;min-width:200px;">
+                <label>Race</label>
+                <select id="pinnacle-race-select" onchange="onPinnacleRaceChange()" style="width:100%;padding:0.5rem 0.8rem;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;">
+                    <option value="">-- Select a Race --</option>
+                </select>
+            </div>
+            <div class="form-group" style="flex:0 0 auto;">
+                <label style="visibility:hidden;">Action</label>
+                <button class="btn-secondary" id="refresh-odds-btn" disabled>Refresh Odds</button>
+            </div>
+        </div>
         <div class="form-group full" style="margin-bottom:1.5rem;">
             <label>Race Setup</label>
             <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;align-items:center;flex-wrap:wrap;">
@@ -637,7 +668,7 @@
         document.getElementById('manual-race-date').value = new Date().toISOString().split('T')[0];
 
         // Autocomplete setup
-        function setupAutocomplete(inputId, listId, hiddenId, endpoint) {
+        function setupAutocomplete(inputId, listId, hiddenId, endpoint, onSelect) {
             const input = document.getElementById(inputId);
             const list = document.getElementById(listId);
             const hidden = document.getElementById(hiddenId);
@@ -661,6 +692,7 @@
                             input.value = label;
                             hidden.value = item.url;
                             list.classList.remove('active');
+                            if (onSelect) onSelect(item);
                         };
                         list.appendChild(div);
                     });
@@ -881,6 +913,8 @@
         // ── Batch Mode Logic ──
         let batchPairCounter = 0;
         let _batchResults = [];
+        let _pinnacleRaces = null;
+        let _pinnacleMatchupIds = null;
 
         function loadBatchSavedRaces() {
             const sel = document.getElementById('batch-saved-race-select');
