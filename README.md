@@ -2,17 +2,18 @@
 
 ML-powered prediction of head-to-head cycling race outcomes. Given two riders and a race profile, the system predicts which rider will finish ahead — mirroring cycling betting markets (e.g., "Pogačar vs Vingegaard in Stage 14").
 
-The pipeline scrapes historical results from ProCyclingStats, engineers ~475 features per matchup, trains a Calibrated XGBoost model, and serves predictions through a Flask web app with Kelly Criterion staking advice and P&L tracking.
+The pipeline scrapes historical results from ProCyclingStats, engineers ~475 features per matchup, selects the top 150 by importance, trains a Calibrated XGBoost model, and serves predictions through a Flask web app with Kelly Criterion staking advice and P&L tracking.
 
 ## How It Works
 
-**Scrape → Build H2H Pairs → Engineer Features → Train Model → Serve Predictions**
+**Scrape → Build H2H Pairs → Engineer Features → Select Top 150 → Train Model → Serve Predictions**
 
 1. **Scraper** pulls race results from ProCyclingStats into a local SQLite database (`data/cache.db`)
 2. **Builder** generates head-to-head training pairs from race results
-3. **Feature pipeline** computes ~475 features per matchup (rider form, variance/consistency, race profile, terrain affinity, H2H history, interactions, etc.)
-4. **Training** trains XGBoost and Calibrated XGBoost (isotonic calibration for well-calibrated probabilities)
-5. **Web app** serves predictions with Kelly Criterion staking advice, a results browser, and P&L tracking
+3. **Feature pipeline** computes ~475 candidate features per matchup (rider form, consistency, race profile, terrain affinity, H2H history, interactions, etc.)
+4. **Feature selection** ranks features by permutation importance and keeps the top 150 (eliminates noise from low-signal features)
+5. **Training** trains XGBoost and Calibrated XGBoost (isotonic calibration for well-calibrated probabilities)
+6. **Web app** serves predictions with Kelly Criterion staking advice, a results browser, and P&L tracking
 
 ## Setup
 
@@ -67,7 +68,7 @@ pytest tests/test_export.py -v    # single module
 
 ```
 data/           Scraper, pair builder, P&L tracking, cache.db
-features/       Feature engineering pipeline (~475 features)
+features/       Feature engineering pipeline (~475 candidates → 150 selected)
 models/         XGBoost training, benchmarking, prediction, saved artifacts
 scripts/        CLI entry points (scrape, train, fine-tune, experiment, export)
 webapp/         Flask web application

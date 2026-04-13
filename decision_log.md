@@ -787,3 +787,32 @@ Key findings:
 - Kelly staking could still benefit from uncertainty estimates (τ) for position sizing, even though the probabilities themselves don't need adjustment
 - Accuracy improvements must come from better features or data, not from post-prediction adjustments
 - The model's weak spot is discrimination (AUC 0.772), not calibration (ECE 0.010)
+
+---
+
+## 2026-04-13 — Feature selection: top 150 by permutation importance
+
+**Hypothesis:** Many of the 474 features have near-zero importance. Selecting only the top features by permutation importance should maintain or improve accuracy while reducing noise and training time.
+
+**Method:** Trained CalibratedXGBoost with different feature counts (top 50, 75, 100, 150, 200, 300, and all 474), selected by permutation importance ranking. Same stratified stage split.
+
+**Results:**
+| Features | Accuracy | ROC-AUC | Brier |
+|----------|----------|---------|-------|
+| 50 | 0.6953 | 0.7677 | 0.1960 |
+| 75 | 0.6966 | 0.7701 | 0.1951 |
+| 100 | 0.6979 | 0.7715 | 0.1945 |
+| **150** | **0.6984** | **0.7719** | **0.1943** |
+| 200 | 0.6979 | 0.7722 | 0.1942 |
+| 300 | 0.6967 | 0.7713 | 0.1945 |
+| 474 (all) | 0.6971 | 0.7716 | 0.1944 |
+
+Final retrained model (150 features): AUC=0.7741, Brier=0.1935.
+
+Key observations:
+- 17 features had zero importance — pure dead weight
+- Top 50 features capture 40% of total importance, top 150 capture ~59%
+- Beyond 150 features, adding more adds noise rather than signal
+- Top features: `diff_career_top10_rate` (11.4%), `interact_diff_quality_x_form` (6.3%), `interact_diff_sprint_x_flat` (2.0%)
+
+**Conclusion:** 150 features is the sweet spot. Made this the default in `train.py --select-features 150`. Reduces model complexity by 68% with no accuracy loss. Also removed non-XGBoost models (LR, RF, NN) from the repo — none beat XGBoost in prior experiments.

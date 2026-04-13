@@ -40,8 +40,8 @@ def _elapsed(start):
 
 def main():
     parser = argparse.ArgumentParser(description="Train cycling H2H predictor")
-    parser.add_argument("--select-features", type=int, default=0, metavar="N",
-                        help="Select top N features by permutation importance (0 = use all)")
+    parser.add_argument("--select-features", type=int, default=150, metavar="N",
+                        help="Select top N features by permutation importance (0 = use all, default: 150)")
     parser.add_argument("--wt-only", action="store_true",
                         help="Train only on World Tour races (uci_tour 1.UWT/2.UWT)")
     parser.add_argument("--split", choices=["stratified", "time"], default="stratified",
