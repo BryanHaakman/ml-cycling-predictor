@@ -148,58 +148,60 @@ def acquire_session_token(headless: bool = True) -> str:
 
   captured_token: dict = {}
 
-  def on_response(response) -> None:
-    """Capture x-session header from any response during login flow."""
-    token = response.headers.get("x-session")  # lowercase — Playwright normalizes
-    if token:
-      # Per RESEARCH.md Pitfall 4: keep the LAST token seen (overwrite)
-      captured_token["value"] = token
-
   with sync_playwright() as p:
     browser = p.chromium.launch(headless=headless)
     context = browser.new_context()
     page = context.new_page()
 
-    page.on("response", on_response)
+    # Navigate directly to cycling matchups (token captured from any page's login)
+    page.goto(PINNACLE_HOME_URL + "en/cycling/matchups/")
 
-    # Navigate to Pinnacle home
-    page.goto(PINNACLE_HOME_URL)
-
-    # Fill login credentials — read from env at call time (not module level)
-    page.get_by_label("Username").fill(os.environ["PINNACLE_USERNAME"])
-    page.get_by_label("Password").fill(os.environ["PINNACLE_PASSWORD"])
-    page.get_by_role("button", name="Sign in").click()
-
-    # Click "I'm fit to play" responsible gambling confirmation gate
+    # Dismiss cookie consent banner if present
     try:
-      page.get_by_text("I'm fit to play").click(timeout=15000)
+      page.get_by_role("button", name="ACCEPT").click(timeout=5000)
     except PlaywrightTimeoutError:
-      try:
-        page.get_by_role("button", name="fit to play").click(timeout=5000)
-      except PlaywrightTimeoutError:
-        log.warning(
-          "acquire_session_token: 'I'm fit to play' button not found — continuing"
-        )
+      pass  # No cookie banner — continue
 
-    # Wait for post-login indicator to confirm full login flow completed
-    try:
-      page.wait_for_url("**/en/sports/**", timeout=15000)
-    except PlaywrightTimeoutError:
-      try:
-        page.wait_for_selector("[data-testid='user-balance']", timeout=5000)
-      except PlaywrightTimeoutError:
-        browser.close()
-        raise CaptchaOrMfaDetected(
-          "Post-login element not found — CAPTCHA or 2FA may be blocking headless login"
-        )
+    # Fill credentials in the header bar fields
+    page.get_by_placeholder("Email or ClientID").first.fill(os.environ["PINNACLE_USERNAME"])
+    page.get_by_placeholder("password").first.fill(os.environ["PINNACLE_PASSWORD"])
 
-    # Cookie fallback: if header interception missed the token
-    if not captured_token.get("value"):
+    # Click header "LOG IN" — opens login modal with pre-filled credentials
+    page.get_by_role("button", name="Log In").first.click()
+
+    # Click "I am fit for play" in the modal (custom UI element, not a standard checkbox)
+    page.get_by_text("I am fit for play").click(timeout=10000)
+
+    # Click the modal's "Log In" submit button
+    # Use the last "Log In" button (modal submit, not header)
+    page.get_by_role("button", name="Log In").last.click()
+
+    # Poll for the "token" cookie — login + GeoComply verification takes time
+    max_wait_ms = 30000
+    poll_interval_ms = 1000
+    elapsed = 0
+    while elapsed < max_wait_ms:
       cookies = context.cookies()
       for cookie in cookies:
-        if "session" in cookie["name"].lower():
+        if cookie["name"] == "token" and "pinnacle" in cookie["domain"].lower():
           captured_token["value"] = cookie["value"]
-          log.info("acquire_session_token: token extracted from cookie %r", cookie["name"])
+          log.info(
+            "acquire_session_token: token extracted from cookie %r on %s (after %ds)",
+            cookie["name"], cookie["domain"], elapsed // 1000,
+          )
+          break
+      if captured_token.get("value"):
+        break
+      page.wait_for_timeout(poll_interval_ms)
+      elapsed += poll_interval_ms
+
+    if not captured_token.get("value"):
+      # Final fallback: check for any session-like cookie
+      cookies = context.cookies()
+      for cookie in cookies:
+        if "session" in cookie["name"].lower() and "pinnacle" in cookie["domain"].lower():
+          captured_token["value"] = cookie["value"]
+          log.info("acquire_session_token: token extracted from fallback cookie %r", cookie["name"])
           break
 
     browser.close()
@@ -207,8 +209,8 @@ def acquire_session_token(headless: bool = True) -> str:
   if not captured_token.get("value"):
     from data.odds import PinnacleAuthError
     raise PinnacleAuthError(
-      "Playwright login appeared to succeed but no X-Session token was found. "
-      "Check response headers and cookies during login."
+      "Playwright login appeared to succeed but no session token cookie was found. "
+      "Check browser cookies after login."
     )
 
   token = captured_token["value"]
