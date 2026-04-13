@@ -148,6 +148,9 @@ class Predictor:
     """Load trained model and make predictions."""
 
     def __init__(self, model_name: str = "CalibratedXGBoost", db_path: str = DB_PATH):
+        supported = ("CalibratedXGBoost", "XGBoost")
+        if model_name not in supported:
+            raise ValueError(f"Unsupported model: {model_name}. Choose from {supported}")
         self.db_path = db_path
         self.model_name = model_name
         self._load_model(model_name)
@@ -159,20 +162,8 @@ class Predictor:
         with open(os.path.join(MODELS_DIR, "feature_names.json"), "r") as f:
             self.feature_names = json.load(f)
 
-        if model_name == "NeuralNetwork":
-            import torch
-            from models.neural_net import CyclingNet
-            input_dim = len(self.feature_names)
-            self.model = CyclingNet(input_dim)
-            state = torch.load(
-                os.path.join(MODELS_DIR, "neural_net.pt"),
-                map_location="cpu", weights_only=True,
-            )
-            self.model.load_state_dict(state)
-            self.model.eval()
-        else:
-            with open(os.path.join(MODELS_DIR, f"{model_name}.pkl"), "rb") as f:
-                self.model = pickle.load(f)
+        with open(os.path.join(MODELS_DIR, f"{model_name}.pkl"), "rb") as f:
+            self.model = pickle.load(f)
 
     def predict(
         self,
@@ -205,11 +196,7 @@ class Predictor:
         X = np.array([[fv.get(name, 0.0) for name in self.feature_names]])
         X_scaled = self.scaler.transform(X)
 
-        if self.model_name == "NeuralNetwork":
-            from models.neural_net import predict_neural_net
-            prob_a = float(predict_neural_net(self.model, X_scaled)[0])
-        else:
-            prob_a = float(self.model.predict_proba(X_scaled)[0, 1])
+        prob_a = float(self.model.predict_proba(X_scaled)[0, 1])
 
         prob_b = 1.0 - prob_a
 
@@ -269,11 +256,7 @@ class Predictor:
         X = np.array([[fv.get(name, 0.0) for name in self.feature_names]])
         X_scaled = self.scaler.transform(X)
 
-        if self.model_name == "NeuralNetwork":
-            from models.neural_net import predict_neural_net
-            prob_a = float(predict_neural_net(self.model, X_scaled)[0])
-        else:
-            prob_a = float(self.model.predict_proba(X_scaled)[0, 1])
+        prob_a = float(self.model.predict_proba(X_scaled)[0, 1])
 
         prob_b = 1.0 - prob_a
 

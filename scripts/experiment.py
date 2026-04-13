@@ -19,8 +19,6 @@ warnings.filterwarnings("ignore")
 
 import numpy as np
 import pandas as pd
-import torch
-torch.set_num_threads(1)
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, roc_auc_score, brier_score_loss
@@ -31,7 +29,6 @@ from features.pipeline import build_feature_matrix, get_all_feature_names
 from features.race_features import RACE_FEATURE_NAMES
 from features.rider_features import RIDER_FEATURE_NAMES
 from features.pipeline import H2H_FEATURE_NAMES
-from models.neural_net import train_neural_net, predict_neural_net
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -148,9 +145,8 @@ def evaluate_experiment(
     y_train: np.ndarray,
     X_test: np.ndarray,
     y_test: np.ndarray,
-    model_type: str = "xgboost",
 ) -> dict:
-    """Train and evaluate a single model on given features."""
+    """Train and evaluate XGBoost on given features."""
     if X_train.shape[1] == 0:
         # Random baseline
         preds = np.random.randint(0, 2, len(y_test))
@@ -160,24 +156,14 @@ def evaluate_experiment(
     Xtr = scaler.fit_transform(X_train)
     Xte = scaler.transform(X_test)
 
-    if model_type == "xgboost":
-        model = xgb.XGBClassifier(
-            n_estimators=200, max_depth=6, learning_rate=0.05,
-            subsample=0.8, colsample_bytree=0.8,
-            min_child_weight=10, random_state=42,
-            eval_metric="logloss",
-        )
-        model.fit(Xtr, y_train, verbose=False)
-        probs = model.predict_proba(Xte)[:, 1]
-    elif model_type == "nn":
-        model, _ = train_neural_net(
-            Xtr, y_train.astype(np.float32),
-            Xte, y_test.astype(np.float32),
-            epochs=50, patience=8,
-        )
-        probs = predict_neural_net(model, Xte)
-    else:
-        raise ValueError(f"Unknown model_type: {model_type}")
+    model = xgb.XGBClassifier(
+        n_estimators=200, max_depth=6, learning_rate=0.05,
+        subsample=0.8, colsample_bytree=0.8,
+        min_child_weight=10, random_state=42,
+        eval_metric="logloss",
+    )
+    model.fit(Xtr, y_train, verbose=False)
+    probs = model.predict_proba(Xte)[:, 1]
 
     preds = (probs >= 0.5).astype(int)
     return {
@@ -187,7 +173,7 @@ def evaluate_experiment(
     }
 
 
-def run_experiments(model_type: str = "xgboost", n_splits: int = 3):
+def run_experiments(n_splits: int = 3):
     """Run all experiments with cross-validation-style repeated splits."""
 
     print("Building dataset...", flush=True)
@@ -200,7 +186,7 @@ def run_experiments(model_type: str = "xgboost", n_splits: int = 3):
     n = len(X_all)
 
     print(f"Dataset: {n} samples, {len(all_cols)} features")
-    print(f"Model: {model_type} | Splits: {n_splits}")
+    print(f"Splits: {n_splits}")
     print(f"Running {len(EXPERIMENTS)} experiments...\n")
 
     results = []
@@ -229,7 +215,7 @@ def run_experiments(model_type: str = "xgboost", n_splits: int = 3):
             ytr = y_all[train_idx]
             yte = y_all[test_idx]
 
-            m = evaluate_experiment(Xtr, ytr, Xte, yte, model_type)
+            m = evaluate_experiment(Xtr, ytr, Xte, yte)
             split_metrics.append(m)
 
         avg = {
@@ -252,7 +238,7 @@ def run_experiments(model_type: str = "xgboost", n_splits: int = 3):
     results_df = pd.DataFrame(results).sort_values("roc_auc", ascending=False)
 
     print("\n" + "=" * 90)
-    print(f"FEATURE ABLATION RESULTS ({model_type.upper()})")
+    print("FEATURE ABLATION RESULTS (XGBoost)")
     print("=" * 90)
     print(results_df.to_string(index=False))
     print("=" * 90)
@@ -281,7 +267,6 @@ def run_experiments(model_type: str = "xgboost", n_splits: int = 3):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="xgboost", choices=["xgboost", "nn"])
     parser.add_argument("--splits", type=int, default=3)
     args = parser.parse_args()
 
@@ -289,4 +274,4 @@ if __name__ == "__main__":
     print(f"CYCLING H2H FEATURE ABLATION STUDY")
     print(f"{'='*90}\n")
 
-    run_experiments(model_type=args.model, n_splits=args.splits)
+    run_experiments(n_splits=args.splits)
