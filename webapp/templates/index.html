@@ -428,7 +428,7 @@
             </div>
             <div class="form-group" style="flex:0 0 auto;">
                 <label style="visibility:hidden;">Action</label>
-                <button class="btn-secondary" id="refresh-odds-btn" disabled>Refresh Odds</button>
+                <button class="btn-secondary" id="refresh-odds-btn" onclick="refreshOdds()" disabled>Refresh Odds</button>
             </div>
         </div>
         <div class="form-group full" style="margin-bottom:1.5rem;">
@@ -1115,6 +1115,75 @@
             // Enable Refresh Odds per D-03
             document.getElementById('refresh-odds-btn').disabled = false;
             updateBatchPairCount();
+        }
+
+        async function refreshOdds() {
+            if (!_pinnacleMatchupIds || _pinnacleMatchupIds.size === 0) return;
+
+            const btn = document.getElementById('refresh-odds-btn');
+            const err = document.getElementById('batch-error');
+            err.style.display = 'none';
+
+            // Loading state
+            btn.disabled = true;
+            btn.textContent = '\u23F3 Refreshing...';
+
+            try {
+                const ids = Array.from(_pinnacleMatchupIds);
+                const res = await fetch('/api/pinnacle/refresh-odds', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({matchup_ids: ids})
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    if (data.type === 'auth_error') {
+                        const envVar = data.env_var || 'PINNACLE_SESSION_COOKIE';
+                        err.innerHTML = 'Session expired. To fix:<br>' +
+                            '1. Open DevTools on pinnacle.ca \u2192 Network tab \u2192 any request<br>' +
+                            '2. Copy the X-Session header value<br>' +
+                            '3. Set ' + envVar + '=&lt;value&gt; in your environment<br>' +
+                            '4. Restart Flask (python webapp/app.py)';
+                    } else {
+                        err.textContent = 'Refresh failed: ' + (data.error || 'Unknown error');
+                    }
+                    err.style.display = 'block';
+                    return;
+                }
+
+                // Per D-13 + DOM-based lookup via data-matchup-id attribute
+                // Do NOT use positional array index -- row removal would cause index mismatch
+                if (data.pairs) {
+                    // Build lookup from response: matchup_id -> updated odds
+                    const oddsById = {};
+                    data.pairs.forEach(pair => { oddsById[pair.matchup_id] = pair; });
+
+                    // Walk all pair rows in the DOM, update only those with matching matchup_id
+                    document.querySelectorAll('#batch-pairs-container .batch-pair-row').forEach(row => {
+                        const mid = row.getAttribute('data-matchup-id');
+                        if (!mid) return; // manually-added rows have no matchup_id -- skip
+                        const updated = oddsById[mid];
+                        if (!updated) return; // market closed or not in response -- skip silently
+
+                        const oddsAEl = row.querySelector('[id^="bp-odds-a-"]');
+                        const oddsBEl = row.querySelector('[id^="bp-odds-b-"]');
+
+                        if (oddsAEl && oddsAEl.getAttribute('data-source') === 'auto') {
+                            oddsAEl.value = updated.odds_a;
+                        }
+                        if (oddsBEl && oddsBEl.getAttribute('data-source') === 'auto') {
+                            oddsBEl.value = updated.odds_b;
+                        }
+                    });
+                }
+            } catch (e) {
+                err.textContent = 'Refresh failed: ' + e.message;
+                err.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Refresh Odds';
+            }
         }
 
         function loadBatchSavedRaces() {
