@@ -63,64 +63,7 @@ pytest tests/test_export.py -v    # single module
 data/           Scraper, pair builder, P&L tracking, cache.db
 features/       Feature engineering pipeline (~295 features)
 models/         Model training, benchmarking, prediction, saved artifacts
-scripts/        CLI entry points (scrape, train, experiment, export, AML sweep)
+scripts/        CLI entry points (scrape, train, experiment, export)
 webapp/         Flask web application
 tests/          Pytest test suite
-deploy/         Azure setup scripts (Container Apps, ML workspace)
 ```
-
-## Deployment
-
-The app deploys to **Azure Container Apps** with automated retraining and a weekly hyperparameter sweep via **Azure ML**.
-
-### Pipeline Flow
-
-```
-Nightly (midnight UTC)        Weekly (Sunday 03:00 UTC)
-  └─ nightly-pipeline.yml       └─ weekly-sweep.yml
-       ├─ Scrape latest data         ├─ Submit HyperDrive sweep to AML
-       ├─ Dump DB snapshot           ├─ Bayesian search over XGBoost params
-       └─ Commit to repo             ├─ Download best model
-            └─ Triggers deploy.yml   └─ Commit if AUC > 0.75
-                 ├─ Retrain model
-                 ├─ Build Docker image
-                 ├─ Deploy to staging
-                 └─ Promote to production
-```
-
-### Quick Start (Azure)
-
-```bash
-# 1. Install Azure CLI + ML extension
-az extension add -n ml
-
-# 2. Create Container Apps infrastructure
-./deploy/azure-setup.sh
-
-# 3. Create Azure ML workspace + compute for sweeps
-./deploy/azure-ml-setup.sh
-
-# 4. Set GitHub secrets (printed by the setup scripts)
-gh secret set AZURE_CLIENT_ID       --body "..."
-gh secret set AZURE_TENANT_ID       --body "..."
-gh secret set AZURE_SUBSCRIPTION_ID --body "..."
-gh secret set AZURE_STORAGE_CONNECTION_STRING --body "..."
-gh secret set APPINSIGHTS_CONNECTION_STRING   --body "..."
-
-# 5. Deploy
-gh workflow run deploy.yml
-
-# 6. Run a hyperparameter sweep (~$3-5 on Azure)
-python scripts/aml_sweep.py --max-trials 36
-```
-
-### Estimated Monthly Cost (~$50 of $150 budget)
-
-| Resource | Cost |
-|----------|------|
-| Container Apps — production (2 CPU / 4GB, scale-to-zero) | ~$30 |
-| Container Apps — staging (1 CPU / 2GB, scale-to-zero) | ~$10 |
-| Application Insights + Log Analytics | ~$5 |
-| Blob Storage (DB snapshots) | ~$1 |
-| Azure ML compute (weekly sweep, 4x DS3_v2) | ~$5 |
-| **Total** | **~$51** |
