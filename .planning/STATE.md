@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-04-12T18:12:46.754Z"
+stopped_at: Phase 04.1 context gathered
+last_updated: "2026-04-13T19:19:46.970Z"
 last_activity: 2026-04-12
 progress:
-  total_phases: 5
-  completed_phases: 4
-  total_plans: 7
-  completed_plans: 7
+  total_phases: 6
+  completed_phases: 5
+  total_plans: 9
+  completed_plans: 9
   percent: 100
 ---
 
@@ -70,6 +70,10 @@ Recent decisions affecting current work:
 - [Phase 04-flask-endpoint-wiring]: Live Pinnacle API: api.arcadia.pinnacle.com (not guest subdomain), X-Session header required, Referer must be pinnacle.ca for Canadian users
 - [Phase 04-flask-endpoint-wiring]: diff_field_rank_quality remains neutral 0.0 in Phase 4 — startlist fetch deferred (D-08)
 
+### Roadmap Evolution
+
+- Phase 04.1 inserted after Phase 04: Playwright Session Manager — replace manual PINNACLE_SESSION_COOKIE with automated browser-based session acquisition (URGENT)
+
 ### Pending Todos
 
 None yet.
@@ -82,6 +86,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-12T18:12:46.749Z
-Stopped at: Completed 04-01-PLAN.md
-Resume file: None
+Last session: 2026-04-13T19:19:46.962Z
+Stopped at: Phase 04.1 context gathered
+Resume file: .planning/phases/04.1-playwright-session-manager-replace-manual-pinnacle-session-c/04.1-CONTEXT.md
