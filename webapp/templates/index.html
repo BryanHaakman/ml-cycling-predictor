@@ -916,6 +916,207 @@
         let _pinnacleRaces = null;
         let _pinnacleMatchupIds = null;
 
+        function addPinnaclePair(pair) {
+            const container = document.getElementById('batch-pairs-container');
+            const idx = batchPairCounter++;
+            const row = document.createElement('div');
+            row.className = 'batch-pair-row';
+            row.id = `batch-pair-${idx}`;
+
+            // Per RESEARCH.md Pattern 4: store matchup_id on the DOM element, not in a parallel array
+            row.setAttribute('data-matchup-id', pair.matchup_id);
+
+            row.innerHTML = `
+                <div class="form-group">
+                    <div class="autocomplete-wrap">
+                        <input type="text" id="bp-a-input-${idx}" placeholder="Search rider A..." autocomplete="off">
+                        <div class="autocomplete-list" id="bp-a-list-${idx}"></div>
+                        <input type="hidden" id="bp-a-url-${idx}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="autocomplete-wrap">
+                        <input type="text" id="bp-b-input-${idx}" placeholder="Search rider B..." autocomplete="off">
+                        <div class="autocomplete-list" id="bp-b-list-${idx}"></div>
+                        <input type="hidden" id="bp-b-url-${idx}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <input type="number" id="bp-odds-a-${idx}" placeholder="e.g. 1.73" step="0.01" min="1.01">
+                </div>
+                <div class="form-group">
+                    <input type="number" id="bp-odds-b-${idx}" placeholder="e.g. 2.00" step="0.01" min="1.01">
+                </div>
+                <button class="remove-pair-btn" onclick="removeBatchPair(${idx})" title="Remove pair">X</button>
+            `;
+            container.appendChild(row);
+
+            // Rider A
+            const aInput = document.getElementById('bp-a-input-' + idx);
+            const aUrl = document.getElementById('bp-a-url-' + idx);
+            const aWrap = aInput.closest('.autocomplete-wrap');
+            if (pair.rider_a_resolved) {
+                aInput.value = pair.pinnacle_name_a;
+                aUrl.value = pair.rider_a_url;
+            } else {
+                // Per D-14: pre-fill with best_candidate hint if available
+                if (pair.best_candidate_a_name) {
+                    aInput.value = pair.best_candidate_a_name;
+                    aUrl.value = pair.best_candidate_a_url || '';
+                }
+                // Per D-15: orange border for unresolved
+                if (aWrap) aWrap.parentElement.classList.add('unresolved-rider');
+            }
+
+            // Per D-15: pass onSelect callback to clear orange border when user selects a valid rider
+            const aOnSelect = pair.rider_a_resolved ? undefined :
+                () => { if (aWrap) aWrap.parentElement.classList.remove('unresolved-rider'); };
+            setupAutocomplete('bp-a-input-' + idx, 'bp-a-list-' + idx, 'bp-a-url-' + idx, '/api/riders', aOnSelect);
+
+            // Rider B
+            const bInput = document.getElementById('bp-b-input-' + idx);
+            const bUrl = document.getElementById('bp-b-url-' + idx);
+            const bWrap = bInput.closest('.autocomplete-wrap');
+            if (pair.rider_b_resolved) {
+                bInput.value = pair.pinnacle_name_b;
+                bUrl.value = pair.rider_b_url;
+            } else {
+                if (pair.best_candidate_b_name) {
+                    bInput.value = pair.best_candidate_b_name;
+                    bUrl.value = pair.best_candidate_b_url || '';
+                }
+                if (bWrap) bWrap.parentElement.classList.add('unresolved-rider');
+            }
+
+            const bOnSelect = pair.rider_b_resolved ? undefined :
+                () => { if (bWrap) bWrap.parentElement.classList.remove('unresolved-rider'); };
+            setupAutocomplete('bp-b-input-' + idx, 'bp-b-list-' + idx, 'bp-b-url-' + idx, '/api/riders', bOnSelect);
+
+            // Odds -- safe order per RESEARCH.md Pitfall 2: (1) set .value, (2) set data-source, (3) attach oninput
+            const oddsA = document.getElementById('bp-odds-a-' + idx);
+            const oddsB = document.getElementById('bp-odds-b-' + idx);
+            oddsA.value = pair.odds_a;
+            oddsB.value = pair.odds_b;
+            oddsA.setAttribute('data-source', 'auto');    // Per D-11
+            oddsB.setAttribute('data-source', 'auto');    // Per D-11
+            oddsA.addEventListener('input', function() { this.setAttribute('data-source', 'user'); }); // Per D-12
+            oddsB.addEventListener('input', function() { this.setAttribute('data-source', 'user'); }); // Per D-12
+        }
+
+        async function loadFromPinnacle() {
+            const btn = document.getElementById('load-pinnacle-btn');
+            const err = document.getElementById('batch-error');
+            const pickerWrap = document.getElementById('pinnacle-race-picker');
+            const sel = document.getElementById('pinnacle-race-select');
+            err.style.display = 'none';
+
+            // Reset state per D-10
+            _pinnacleRaces = null;
+            _pinnacleMatchupIds = null;
+            document.getElementById('refresh-odds-btn').disabled = true;
+
+            // Loading state per D-07
+            btn.disabled = true;
+            btn.textContent = '\u23F3 Loading from Pinnacle...';
+            pickerWrap.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/pinnacle/load', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({})
+                });
+                const data = await res.json();
+
+                // Error handling per D-17, D-18
+                if (!res.ok) {
+                    if (data.type === 'auth_error') {
+                        const envVar = data.env_var || 'PINNACLE_SESSION_COOKIE';
+                        err.innerHTML = 'Session expired. To fix:<br>' +
+                            '1. Open DevTools on pinnacle.ca \u2192 Network tab \u2192 any request<br>' +
+                            '2. Copy the X-Session header value<br>' +
+                            '3. Set ' + envVar + '=&lt;value&gt; in your environment<br>' +
+                            '4. Restart Flask (python webapp/app.py)';
+                    } else {
+                        err.textContent = 'Load failed: ' + (data.error || 'Unknown error');
+                    }
+                    err.style.display = 'block';
+                    return;
+                }
+
+                if (!data.races || data.races.length === 0) {
+                    err.textContent = 'No cycling markets found for today. Check that your Pinnacle session is active and markets are open.';
+                    err.style.display = 'block';
+                    return;
+                }
+
+                // Store races
+                _pinnacleRaces = data.races;
+
+                // Populate race picker per D-04
+                sel.innerHTML = '<option value="">\u2014 Select a Race \u2014</option>';
+                data.races.forEach((race, i) => {
+                    const opt = document.createElement('option');
+                    opt.value = i;
+                    opt.textContent = race.race_name + ' (' + race.pairs.length + ' matchups)';
+                    sel.appendChild(opt);
+                });
+                pickerWrap.style.display = '';
+
+                // Per D-04: if single race, auto-select immediately
+                if (data.races.length === 1) {
+                    sel.value = '0';
+                    populatePinnacleRace(0);
+                }
+            } catch (e) {
+                err.textContent = 'Load failed: ' + e.message;
+                err.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Load from Pinnacle';
+            }
+        }
+
+        function onPinnacleRaceChange() {
+            const sel = document.getElementById('pinnacle-race-select');
+            const idx = parseInt(sel.value);
+            if (isNaN(idx) || !_pinnacleRaces || !_pinnacleRaces[idx]) return;
+            populatePinnacleRace(idx);
+        }
+
+        function populatePinnacleRace(idx) {
+            const race = _pinnacleRaces[idx];
+            if (!race) return;
+
+            // Per D-09: always replace stage fields
+            const sc = race.stage_context || {};
+            document.getElementById('batch-race-name').value = race.race_name || '';
+            document.getElementById('batch-race-date').value = sc.race_date || '';
+            document.getElementById('batch-distance').value = sc.distance || '';
+            document.getElementById('batch-vert').value = sc.vertical_meters || '';
+            document.getElementById('batch-profile').value = sc.profile_icon || 'p3';
+            document.getElementById('batch-stage-type').value = sc.stage_type || 'RR';
+            document.getElementById('batch-oneday').value = sc.is_one_day_race ? '1' : '0';
+            document.getElementById('batch-climbs').value = sc.num_climbs || '';
+            document.getElementById('batch-uci-tour').value = sc.uci_tour || '';
+            document.getElementById('batch-race-url').value = sc.race_base_url || '';
+
+            // Per D-08: clear existing pairs, replace with Pinnacle pairs
+            clearBatchPairs();
+
+            // Build _pinnacleMatchupIds as a Set of matchup_id strings (for early-exit guard in refreshOdds)
+            _pinnacleMatchupIds = new Set();
+
+            race.pairs.forEach(pair => {
+                addPinnaclePair(pair);
+                _pinnacleMatchupIds.add(pair.matchup_id);
+            });
+
+            // Enable Refresh Odds per D-03
+            document.getElementById('refresh-odds-btn').disabled = false;
+            updateBatchPairCount();
+        }
+
         function loadBatchSavedRaces() {
             const sel = document.getElementById('batch-saved-race-select');
             sel.innerHTML = '<option value="">— Select Saved Race or Enter Below —</option>';
