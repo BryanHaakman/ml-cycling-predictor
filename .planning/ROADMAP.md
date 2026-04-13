@@ -16,6 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 2: Name Resolver** - Implement data/name_resolver.py with exact/normalize/fuzzy/cache pipeline for Pinnacle-to-PCS name mapping
 - [ ] **Phase 3: Stage Context Fetcher** - Implement intelligence/stage_context.py to fetch live stage details via procyclingstats lib with graceful degradation
 - [x] **Phase 4: Flask Endpoint Wiring** - Integrate all three components into POST /api/pinnacle/load and POST /api/pinnacle/refresh-odds with locked response schema (completed 2026-04-12)
+- [ ] **Phase 04.1: Playwright Session Manager** - Replace manual PINNACLE_SESSION_COOKIE with automated Playwright-based session acquisition (INSERTED)
 - [ ] **Phase 5: Frontend Integration** - Add "Load from Pinnacle" button, race selector, and "Refresh Odds" to batch H2H UI with per-cell dirty tracking
 
 ## Phase Details
@@ -36,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Depends on**: Phase 1
 **Requirements**: NAME-01, NAME-02, NAME-03, NAME-04, NAME-05
 **Success Criteria** (what must be TRUE):
-  1. NameResolver.resolve() correctly maps rider names that differ only by accent, case, or word order — including at minimum: Primož Roglič, Wout van Aert, Romain Bardet, Nairo Quintana — without requiring manual intervention
+  1. NameResolver.resolve() correctly maps rider names that differ only by accent, case, or word order — including at minimum: Primoz Roglic, Wout van Aert, Romain Bardet, Nairo Quintana — without requiring manual intervention
   2. A name that scores below the auto-accept threshold (90) returns None rather than a wrong match; the pair is flagged as unresolved rather than silently mis-mapped
   3. Accepted mappings are written to data/name_mappings.json and re-used on the next resolver instantiation without re-querying cache.db or re-running fuzzy logic
   4. name_mappings.json schema is validated on load (each value matches rider/[a-z0-9-]+); invalid entries are logged and skipped rather than crashing the resolver
@@ -50,7 +51,7 @@ Plans:
 **Depends on**: Phase 1
 **Requirements**: STGE-01, STGE-02
 **Success Criteria** (what must be TRUE):
-  1. fetch_stage_context() called with a valid current-race Pinnacle name returns a StageContext with non-zero distance, vertical_meters, num_climbs, a valid profile_icon (p1–p5), a race_date matching today's date within ±1 day, and is_resolved=True — confirmed against at least one live upcoming race
+  1. fetch_stage_context() called with a valid current-race Pinnacle name returns a StageContext with non-zero distance, vertical_meters, num_climbs, a valid profile_icon (p1-p5), a race_date matching today's date within +/-1 day, and is_resolved=True — confirmed against at least one live upcoming race
   2. fetch_stage_context() called with an unrecognized race name or when PCS is unreachable returns a StageContext with is_resolved=False within the configured timeout (5 seconds); the calling endpoint is not blocked and manual input fields remain available
 **Plans:** 2 plans
 Plans:
@@ -71,6 +72,17 @@ Plans:
 Plans:
 - [x] 04-01-PLAN.md — Blueprint skeleton + /load + /refresh-odds + schema freeze + decision log + live verification checkpoint
 
+### Phase 04.1: Playwright Session Manager: Replace manual PINNACLE_SESSION_COOKIE with automated Playwright-based session acquisition (INSERTED)
+
+**Goal:** Automated Playwright-based session acquisition that replaces the manual PINNACLE_SESSION_COOKIE workflow with headless Chromium login, adaptive TTL caching, and centralized configuration — all triggered transparently when the user clicks "Load from Pinnacle"
+**Requirements**: D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08, D-09, D-10, D-11, D-12
+**Depends on:** Phase 4
+**Plans:** 2 plans
+
+Plans:
+- [ ] 04.1-01-PLAN.md — config.py + .env infrastructure + dependency updates + test scaffolds
+- [ ] 04.1-02-PLAN.md — Playwright session manager + odds.py auth chain integration + live verification checkpoint
+
 ### Phase 5: Frontend Integration
 **Goal**: The batch H2H prediction UI has a "Load from Pinnacle" button and race selector that auto-populate all stage fields and matchup rows from live Pinnacle data, plus a "Refresh Odds" button that updates odds without touching user-edited cells or stage context
 **Depends on**: Phase 4
@@ -89,7 +101,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 04.1 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -97,4 +109,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Name Resolver | 0/2 | Planned | - |
 | 3. Stage Context Fetcher | 0/2 | Planned | - |
 | 4. Flask Endpoint Wiring | 1/1 | Complete   | 2026-04-12 |
+| 04.1. Playwright Session Manager | 0/2 | Planned | - |
 | 5. Frontend Integration | 0/2 | Planned | - |
