@@ -1,14 +1,19 @@
 """
 Pinnacle cycling H2H market client.
 
-Fetches today's active cycling H2H matchups from Pinnacle's internal guest API
+Fetches today's active cycling H2H matchups from Pinnacle's public guest API
 (guest.api.arcadia.pinnacle.com), normalizes American odds to decimal, and appends
 a JSONL audit entry to data/odds_log.jsonl after every fetch (including empty fetches).
 
-Auth lookup order:
-  1. PINNACLE_SESSION_COOKIE environment variable (highest priority)
-  2. data/.pinnacle_key_cache (disk cache from previous extraction)
-  3. JS bundle extraction from www.pinnacle.com (slowest, refreshes cache)
+The guest API is publicly accessible with no authentication required. Two sport-level
+calls are made per fetch (sport matchups + sport markets), rather than one call per
+league. Matchups where either participant is "The Field" are filtered out — these are
+outright bets, not H2H matchups.
+
+X-Api-Key lookup order (courtesy header — not enforced by guest endpoints):
+  1. data/.pinnacle_key_cache (disk cache from previous extraction)
+  2. JS bundle extraction from www.pinnacle.com (slowest, refreshes cache)
+  3. Raise PinnacleAuthError
 
 On HTTP 401/403: cache is invalidated and extraction is retried exactly once.
 A second consecutive 401/403 raises PinnacleAuthError immediately.
@@ -34,7 +39,7 @@ import requests
 # Constants
 # ---------------------------------------------------------------------------
 
-PINNACLE_API_BASE: str = "https://api.arcadia.pinnacle.com/0.1"
+PINNACLE_API_BASE: str = "https://guest.api.arcadia.pinnacle.com/0.1"
 PINNACLE_CYCLING_SPORT_ID: int = 45
 REQUEST_TIMEOUT: int = 60  # seconds, matches data/scraper.py pattern
 KEY_CACHE_PATH: str = os.path.join(os.path.dirname(__file__), ".pinnacle_key_cache")
@@ -49,10 +54,11 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class PinnacleAuthError(Exception):
-  """Raised when X-Api-Key is missing, expired, or rejected by Pinnacle API.
+  """Raised when X-Api-Key cannot be extracted or is rejected by Pinnacle API.
 
-  Callers should instruct the user to update the PINNACLE_SESSION_COOKIE
-  environment variable with a fresh key extracted from the Pinnacle website.
+  The guest API does not enforce authentication, so this error should be rare
+  in practice. It may occur if Pinnacle changes their API structure and the
+  JS bundle key extraction patterns no longer match.
   """
 
 
@@ -194,13 +200,13 @@ def _invalidate_key_cache() -> None:
 # ---------------------------------------------------------------------------
 
 def _get_api_key() -> str:
-  """Resolve the X-Api-Key using the lookup chain: env var -> cache -> JS bundle.
+  """Resolve the X-Api-Key using the lookup chain: cache -> JS bundle.
 
-  Lookup order (per CONTEXT.md D-13, D-14, D-16):
-    1. PINNACLE_SESSION_COOKIE environment variable — if set, return immediately
-    2. KEY_CACHE_PATH disk cache — if file exists and is non-empty, return contents
-    3. _extract_key_from_bundle() — if returns a key, write to cache and return it
-    4. All paths exhausted -> raise PinnacleAuthError
+  The X-Api-Key is sent as a courtesy header only — the guest API does not
+  enforce it. Lookup order:
+    1. KEY_CACHE_PATH disk cache — if file exists and is non-empty, return contents
+    2. _extract_key_from_bundle() — if returns a key, write to cache and return it
+    3. All paths exhausted -> raise PinnacleAuthError
 
   Returns:
     The API key string (stripped of whitespace).
@@ -208,12 +214,7 @@ def _get_api_key() -> str:
   Raises:
     PinnacleAuthError: If all lookup paths are exhausted.
   """
-  # 1. Environment variable (highest priority)
-  env_key = os.environ.get("PINNACLE_SESSION_COOKIE", "").strip()
-  if env_key:
-    return env_key
-
-  # 2. Disk cache
+  # 1. Disk cache
   if os.path.exists(KEY_CACHE_PATH):
     try:
       with open(KEY_CACHE_PATH, "r", encoding="utf-8") as f:
@@ -224,8 +225,8 @@ def _get_api_key() -> str:
     except OSError as e:
       log.warning("_get_api_key: could not read key cache: %s", e)
 
-  # 3. JS bundle extraction
-  log.info("_get_api_key: no env var or cache — attempting JS bundle extraction")
+  # 2. JS bundle extraction
+  log.info("_get_api_key: no cache — attempting JS bundle extraction")
   extracted = _extract_key_from_bundle()
   if extracted:
     try:
@@ -236,10 +237,10 @@ def _get_api_key() -> str:
       log.warning("_get_api_key: could not write key cache: %s", e)
     return extracted
 
-  # 4. All paths exhausted
+  # 3. All paths exhausted
   raise PinnacleAuthError(
-    "Pinnacle API key could not be extracted. "
-    "Set the PINNACLE_SESSION_COOKIE environment variable as a manual override."
+    "Pinnacle API key could not be extracted from JS bundle. "
+    "Provide a cached key at data/.pinnacle_key_cache as a manual override."
   )
 
 
@@ -250,9 +251,6 @@ def _get_api_key() -> str:
 def _check_auth(response: requests.Response) -> None:
   """Raise PinnacleAuthError on HTTP 401 or 403.
 
-  Message includes the HTTP status code and names the PINNACLE_SESSION_COOKIE
-  environment variable so the user knows exactly what to update.
-
   Args:
     response: The HTTP response from a Pinnacle API request.
 
@@ -261,8 +259,8 @@ def _check_auth(response: requests.Response) -> None:
   """
   if response.status_code in (401, 403):
     raise PinnacleAuthError(
-      f"Pinnacle API key is expired or invalid (HTTP {response.status_code}). "
-      "Set PINNACLE_SESSION_COOKIE environment variable as a manual override."
+      f"Pinnacle API returned HTTP {response.status_code}. "
+      "The guest API key may have changed — delete data/.pinnacle_key_cache to force re-extraction."
     )
 
 
@@ -277,8 +275,8 @@ def _append_audit_log(
 ) -> None:
   """Append one JSONL record to ODDS_LOG_PATH after every fetch.
 
-  Record is always written — including empty fetches (D-10). Markets are
-  serialized as post-normalization decimal odds dicts (D-09).
+  Record is always written — including empty fetches. Markets are
+  serialized as post-normalization decimal odds dicts.
 
   Args:
     markets: List of OddsMarket objects (may be empty).
@@ -306,12 +304,20 @@ def _append_audit_log(
 # ---------------------------------------------------------------------------
 
 def fetch_cycling_h2h_markets() -> list:
-  """Fetch today's cycling H2H matchups from Pinnacle's internal API.
+  """Fetch today's cycling H2H matchups from Pinnacle's public guest API.
 
-  Implements the three-step fetch cycle: leagues -> matchups -> straight markets,
-  joined in memory on matchupId. Returns normalized decimal OddsMarket objects.
+  Uses the sport-level 2-call pattern:
+    1. GET /sports/45/matchups — all cycling matchups with participant names
+    2. GET /sports/45/markets/straight — all cycling odds, keyed by matchupId
 
-  Auth retry logic (per CONTEXT.md D-15):
+  Matchups where either participant is "The Field" are filtered out (these are
+  outright winner bets, not H2H matchups). The two responses are joined in
+  memory on matchup["id"] == market["matchupId"].
+
+  No session token or login is required — the guest API is publicly accessible.
+  X-Api-Key is sent as a courtesy header only (not enforced by guest endpoints).
+
+  Auth retry logic (defensive — unlikely on guest API):
     1. Call _get_api_key() — raises PinnacleAuthError if all paths exhausted
     2. Make API requests; on 401/403: invalidate cache, call _get_api_key() again
     3. If second attempt also 401/403: raise PinnacleAuthError immediately
@@ -319,7 +325,7 @@ def fetch_cycling_h2h_markets() -> list:
 
   Returns:
     list[OddsMarket]: Active H2H matchups with decimal odds. Empty list if no
-    cycling markets are open today (never raises for empty results — D-11).
+    cycling markets are open today (never raises for empty results).
 
   Raises:
     PinnacleAuthError: If the API key is missing or rejected after one retry.
@@ -334,119 +340,111 @@ def fetch_cycling_h2h_markets() -> list:
       "Referer": PINNACLE_HOME_URL,
       "Accept": "application/json",
     }
-    session_token = os.environ.get("PINNACLE_SESSION", "").strip()
-    if session_token:
-      headers["X-Session"] = session_token
+    # No X-Session header — the guest API requires no session token
 
     try:
-      # Step 1: Get active cycling leagues
-      leagues_resp = requests.get(
-        f"{PINNACLE_API_BASE}/sports/{PINNACLE_CYCLING_SPORT_ID}/leagues",
-        params={"all": "false"},
+      # Call 1: all cycling matchups (sport-level, single call)
+      matchups_resp = requests.get(
+        f"{PINNACLE_API_BASE}/sports/{PINNACLE_CYCLING_SPORT_ID}/matchups",
+        params={"withSpecials": "false"},
         headers=headers,
         timeout=REQUEST_TIMEOUT,
       )
 
-      # Auth check on the leagues endpoint
-      if leagues_resp.status_code in (401, 403):
+      # Auth check (unlikely on guest API, but defensive)
+      if matchups_resp.status_code in (401, 403):
         if retried:
-          # Second consecutive auth failure — raise immediately, no further retry
-          _append_audit_log([], "auth_error", f"HTTP {leagues_resp.status_code} after retry")
+          _append_audit_log([], "auth_error", f"HTTP {matchups_resp.status_code} after retry")
           raise PinnacleAuthError(
-            f"Pinnacle API key is expired or invalid (HTTP {leagues_resp.status_code}). "
-            "Set PINNACLE_SESSION_COOKIE environment variable as a manual override."
+            f"Pinnacle API returned HTTP {matchups_resp.status_code} after retry. "
+            "Delete data/.pinnacle_key_cache to force key re-extraction."
           )
-        # First auth failure — invalidate cache and re-extract
         log.warning(
           "fetch_cycling_h2h_markets: received HTTP %s, invalidating cache and retrying",
-          leagues_resp.status_code,
+          matchups_resp.status_code,
         )
         _invalidate_key_cache()
         api_key = _get_api_key()
         retried = True
-        continue  # retry with fresh key
+        continue
 
-      _check_auth(leagues_resp)
+      _check_auth(matchups_resp)
 
-      leagues_data = leagues_resp.json()
-      if not isinstance(leagues_data, list):
-        log.warning("fetch_cycling_h2h_markets: leagues response was not a list, got %r", type(leagues_data).__name__)
+      matchups_data = matchups_resp.json()
+      if not isinstance(matchups_data, list):
+        log.warning(
+          "fetch_cycling_h2h_markets: matchups response was not a list, got %r",
+          type(matchups_data).__name__,
+        )
         _append_audit_log([], "empty")
         return []
 
-      # Step 2 & 3: For each league, fetch matchups and markets, then join
-      markets: list = []
-      for league in leagues_data:
-        lid = league["id"]
-        race_name = league.get("name", f"League {lid}")
-
-        # Fetch matchups (rider names)
-        matchups_resp = requests.get(
-          f"{PINNACLE_API_BASE}/leagues/{lid}/matchups",
-          headers=headers,
-          timeout=REQUEST_TIMEOUT,
+      # Call 2: all cycling markets (sport-level, single call)
+      markets_resp = requests.get(
+        f"{PINNACLE_API_BASE}/sports/{PINNACLE_CYCLING_SPORT_ID}/markets/straight",
+        params={"primaryOnly": "false", "withSpecials": "false"},
+        headers=headers,
+        timeout=REQUEST_TIMEOUT,
+      )
+      markets_data = markets_resp.json()
+      if not isinstance(markets_data, list):
+        log.warning(
+          "fetch_cycling_h2h_markets: markets response was not a list, got %r",
+          type(markets_data).__name__,
         )
-        matchups_data = matchups_resp.json()
-        if not isinstance(matchups_data, list):
+        _append_audit_log([], "empty")
+        return []
+
+      # Build lookup: matchupId -> market
+      market_by_id: dict = {m["matchupId"]: m for m in markets_data}
+
+      # Join matchups with markets; filter "The Field" outright bets
+      markets_list: list = []
+      for matchup in matchups_data:
+        participants = matchup.get("participants", [])
+        if len(participants) < 2:
           log.warning(
-            "fetch_cycling_h2h_markets: league %s matchups returned non-list, skipping",
-            race_name,
+            "fetch_cycling_h2h_markets: matchup %s has fewer than 2 participants, skipping",
+            matchup.get("id"),
           )
           continue
 
-        # Fetch straight markets (odds)
-        markets_resp = requests.get(
-          f"{PINNACLE_API_BASE}/leagues/{lid}/markets/straight",
-          headers=headers,
-          timeout=REQUEST_TIMEOUT,
-        )
-        markets_data = markets_resp.json()
-        if not isinstance(markets_data, list):
+        rider_a = participants[0]["name"]
+        rider_b = participants[1]["name"]
+
+        # Filter outright bets (rider vs "The Field")
+        if rider_a == "The Field" or rider_b == "The Field":
+          continue
+
+        market = market_by_id.get(matchup["id"])
+        if not market or market.get("status") != "open":
+          continue
+
+        prices = {p["designation"]: p["price"] for p in market.get("prices", [])}
+        home_price = prices.get("home")
+        away_price = prices.get("away")
+        if home_price is None or away_price is None:
           log.warning(
-            "fetch_cycling_h2h_markets: league %s markets returned non-list, skipping",
-            race_name,
+            "fetch_cycling_h2h_markets: matchup %s missing home/away prices, skipping",
+            matchup["id"],
           )
           continue
 
-        # Build lookup dict: matchupId -> market
-        market_by_id: dict = {m["matchupId"]: m for m in markets_data}
+        # race_name comes from the matchup's embedded league object
+        race_name = matchup.get("league", {}).get("name", f"Matchup {matchup['id']}")
 
-        # Join matchups with markets
-        for matchup in matchups_data:
-          market = market_by_id.get(matchup["id"])
-          if not market or market.get("status") != "open":
-            continue
+        markets_list.append(OddsMarket(
+          rider_a_name=rider_a,
+          rider_b_name=rider_b,
+          odds_a=_american_to_decimal(home_price),
+          odds_b=_american_to_decimal(away_price),
+          race_name=race_name,
+          matchup_id=str(matchup["id"]),
+        ))
 
-          prices = {p["designation"]: p["price"] for p in market.get("prices", [])}
-          home_price = prices.get("home")
-          away_price = prices.get("away")
-          if home_price is None or away_price is None:
-            log.warning(
-              "fetch_cycling_h2h_markets: matchup %s missing home/away prices, skipping",
-              matchup["id"],
-            )
-            continue
-
-          participants = matchup.get("participants", [])
-          if len(participants) < 2:
-            log.warning(
-              "fetch_cycling_h2h_markets: matchup %s has fewer than 2 participants, skipping",
-              matchup["id"],
-            )
-            continue
-
-          markets.append(OddsMarket(
-            rider_a_name=participants[0]["name"],
-            rider_b_name=participants[1]["name"],
-            odds_a=_american_to_decimal(home_price),
-            odds_b=_american_to_decimal(away_price),
-            race_name=race_name,
-            matchup_id=str(matchup["id"]),
-          ))
-
-      status = "ok" if markets else "empty"
-      _append_audit_log(markets, status)
-      return markets
+      status = "ok" if markets_list else "empty"
+      _append_audit_log(markets_list, status)
+      return markets_list
 
     except requests.RequestException as e:
       log.warning("fetch_cycling_h2h_markets: network error: %s", e)
