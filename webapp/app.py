@@ -308,12 +308,15 @@ def api_predict_batch():
     return jsonify({"results": results, "count": len(results)})
 
 
+ALLOWED_TABLES: set[str] = {"races", "stages", "results", "riders"}
+
+
 @app.route("/api/stats")
 def api_stats():
     """Database stats."""
     conn = get_db()
     stats = {}
-    for table in ["races", "stages", "results", "riders"]:
+    for table in ALLOWED_TABLES:
         row = conn.execute(f"SELECT COUNT(*) as c FROM {table}").fetchone()
         stats[table] = row["c"]
     year_range = conn.execute("SELECT MIN(year) as mn, MAX(year) as mx FROM races").fetchone()
