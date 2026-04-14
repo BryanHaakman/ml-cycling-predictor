@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 2: Name Resolver** - Implement data/name_resolver.py with exact/normalize/fuzzy/cache pipeline for Pinnacle-to-PCS name mapping
 - [ ] **Phase 3: Stage Context Fetcher** - Implement intelligence/stage_context.py to fetch live stage details via procyclingstats lib with graceful degradation
 - [x] **Phase 4: Flask Endpoint Wiring** - Integrate all three components into POST /api/pinnacle/load and POST /api/pinnacle/refresh-odds with locked response schema (completed 2026-04-12)
-- [ ] **Phase 04.1: Playwright Session Manager** - Replace manual PINNACLE_SESSION_COOKIE with automated Playwright-based session acquisition (INSERTED)
+- [ ] **Phase 04.1: Guest API Pivot** - Revert failed Playwright experiment, switch to guest API (guest.api.arcadia.pinnacle.com) for zero-auth H2H odds (INSERTED, replanned 2026-04-13)
 - [ ] **Phase 5: Frontend Integration** - Add "Load from Pinnacle" button, race selector, and "Refresh Odds" to batch H2H UI with per-cell dirty tracking
 
 ## Phase Details
@@ -72,16 +72,16 @@ Plans:
 Plans:
 - [x] 04-01-PLAN.md — Blueprint skeleton + /load + /refresh-odds + schema freeze + decision log + live verification checkpoint
 
-### Phase 04.1: Playwright Session Manager: Replace manual PINNACLE_SESSION_COOKIE with automated Playwright-based session acquisition (INSERTED)
+### Phase 04.1: Guest API Pivot — Replace failed Playwright experiment with direct guest API calls (INSERTED, replanned)
 
-**Goal:** Automated Playwright-based session acquisition that replaces the manual PINNACLE_SESSION_COOKIE workflow with headless Chromium login, adaptive TTL caching, and centralized configuration — all triggered transparently when the user clicks "Load from Pinnacle"
+**Goal:** Revert all Playwright session manager code, switch PINNACLE_API_BASE to the guest subdomain (guest.api.arcadia.pinnacle.com), optimize to 2 sport-level API calls, and filter "The Field" outright bets — delivering a zero-auth odds client
 **Requirements**: D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08, D-09, D-10, D-11, D-12
 **Depends on:** Phase 4
 **Plans:** 2 plans
 
 Plans:
-- [ ] 04.1-01-PLAN.md — config.py + .env infrastructure + dependency updates + test scaffolds
-- [ ] 04.1-02-PLAN.md — Playwright session manager + odds.py auth chain integration + live verification checkpoint
+- [ ] 04.1-01-PLAN.md — Revert all Playwright experiment files, restore data/odds.py and dependencies to pre-04.1 state
+- [ ] 04.1-02-PLAN.md — Guest API constant, sport-level 2-call fetch, "The Field" filter, updated tests
 
 ### Phase 5: Frontend Integration
 **Goal**: The batch H2H prediction UI has a "Load from Pinnacle" button and race selector that auto-populate all stage fields and matchup rows from live Pinnacle data, plus a "Refresh Odds" button that updates odds without touching user-edited cells or stage context
@@ -109,5 +109,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 04.1 → 5
 | 2. Name Resolver | 0/2 | Planned | - |
 | 3. Stage Context Fetcher | 0/2 | Planned | - |
 | 4. Flask Endpoint Wiring | 1/1 | Complete   | 2026-04-12 |
-| 04.1. Playwright Session Manager | 0/2 | Planned | - |
+| 04.1. Guest API Pivot | 0/2 | Replanned  | - |
 | 5. Frontend Integration | 0/2 | Planned | - |
