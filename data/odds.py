@@ -86,14 +86,14 @@ class OddsMarket:
 # Odds conversion
 # ---------------------------------------------------------------------------
 
-def _american_to_decimal(american: int) -> float:
+def _american_to_decimal(american: int | float) -> float:
   """Convert American odds to decimal format.
 
   Private — do NOT import from models/predict.py (circular import risk).
   This uses the identical formula from models/predict.py::american_odds_to_decimal().
 
   Args:
-    american: American integer odds (e.g., +107 or -154).
+    american: American odds value (e.g., +107, -154, or -154.5).
 
   Returns:
     Decimal odds rounded to 4 decimal places.
@@ -103,6 +103,8 @@ def _american_to_decimal(american: int) -> float:
     -154 -> 1.6494
     -100 -> 2.0
   """
+  if american == 0:
+    raise ValueError("American odds of 0 are invalid")
   if american > 0:
     return round(american / 100.0 + 1.0, 4)
   return round(100.0 / abs(american) + 1.0, 4)
@@ -386,6 +388,8 @@ def fetch_cycling_h2h_markets() -> list:
         headers=headers,
         timeout=REQUEST_TIMEOUT,
       )
+      _check_auth(markets_resp)
+      markets_resp.raise_for_status()
       markets_data = markets_resp.json()
       if not isinstance(markets_data, list):
         log.warning(
