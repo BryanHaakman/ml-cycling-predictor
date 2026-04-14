@@ -118,9 +118,9 @@ def _extract_key_from_bundle() -> Optional[str]:
   """Fetch Pinnacle's main JS bundle and regex-extract the 32-char API key.
 
   Method:
-    1. GET https://www.pinnacle.com/ HTML
+    1. GET https://www.pinnacle.ca/ HTML
     2. Find the main JS bundle <script src="..."> tag
-    3. GET https://www.pinnacle.com{bundle_path}
+    3. GET https://www.pinnacle.ca{bundle_path}
     4. Regex-match for the API key pattern (try multiple patterns)
     5. Return the first match, or None if not found
 
@@ -152,7 +152,7 @@ def _extract_key_from_bundle() -> Optional[str]:
       log.warning("_extract_key_from_bundle: could not find main JS bundle in Pinnacle HTML")
       return None
 
-    bundle_url = f"https://www.pinnacle.com{bundle_path}"
+    bundle_url = f"https://www.pinnacle.ca{bundle_path}"
     log.info("_extract_key_from_bundle: fetching bundle %s", bundle_url)
     bundle_resp = requests.get(bundle_url, timeout=REQUEST_TIMEOUT)
     bundle_resp.raise_for_status()
