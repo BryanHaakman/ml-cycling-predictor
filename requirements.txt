@@ -13,5 +13,3 @@ matplotlib>=3.8.0
 pyarrow>=14.0.0
 pytest>=7.0.0
 rapidfuzz>=3.0.0
-playwright==1.58.0
-python-dotenv==1.2.2

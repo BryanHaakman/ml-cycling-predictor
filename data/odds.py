@@ -30,14 +30,16 @@ from typing import Optional
 
 import requests
 
-from config import (
-  PINNACLE_API_BASE,
-  PINNACLE_CYCLING_SPORT_ID,
-  REQUEST_TIMEOUT,
-  KEY_CACHE_PATH,
-  ODDS_LOG_PATH,
-  PINNACLE_HOME_URL,
-)
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+PINNACLE_API_BASE: str = "https://api.arcadia.pinnacle.com/0.1"
+PINNACLE_CYCLING_SPORT_ID: int = 45
+REQUEST_TIMEOUT: int = 60  # seconds, matches data/scraper.py pattern
+KEY_CACHE_PATH: str = os.path.join(os.path.dirname(__file__), ".pinnacle_key_cache")
+ODDS_LOG_PATH: str = os.path.join(os.path.dirname(__file__), "odds_log.jsonl")
+PINNACLE_HOME_URL: str = "https://www.pinnacle.ca/"
 
 log = logging.getLogger(__name__)
 
@@ -192,24 +194,26 @@ def _invalidate_key_cache() -> None:
 # ---------------------------------------------------------------------------
 
 def _get_api_key() -> str:
-  """Resolve the static Pinnacle X-Api-Key via disk cache or JS bundle extraction.
+  """Resolve the X-Api-Key using the lookup chain: env var -> cache -> JS bundle.
 
-  This returns the STATIC API key (embedded in the Pinnacle frontend JS bundle),
-  NOT the per-session token. The session token is handled separately by
-  data.session_manager and sent as the X-Session header.
-
-  Lookup order:
-    1. Disk cache (KEY_CACHE_PATH from previous JS bundle extraction)
-    2. JS bundle extraction from pinnacle.com
-    3. All paths exhausted -> raise PinnacleAuthError
+  Lookup order (per CONTEXT.md D-13, D-14, D-16):
+    1. PINNACLE_SESSION_COOKIE environment variable — if set, return immediately
+    2. KEY_CACHE_PATH disk cache — if file exists and is non-empty, return contents
+    3. _extract_key_from_bundle() — if returns a key, write to cache and return it
+    4. All paths exhausted -> raise PinnacleAuthError
 
   Returns:
-    The static API key string (stripped of whitespace).
+    The API key string (stripped of whitespace).
 
   Raises:
     PinnacleAuthError: If all lookup paths are exhausted.
   """
-  # 1. Disk cache (from previous JS bundle extraction)
+  # 1. Environment variable (highest priority)
+  env_key = os.environ.get("PINNACLE_SESSION_COOKIE", "").strip()
+  if env_key:
+    return env_key
+
+  # 2. Disk cache
   if os.path.exists(KEY_CACHE_PATH):
     try:
       with open(KEY_CACHE_PATH, "r", encoding="utf-8") as f:
@@ -220,8 +224,8 @@ def _get_api_key() -> str:
     except OSError as e:
       log.warning("_get_api_key: could not read key cache: %s", e)
 
-  # 2. JS bundle extraction
-  log.info("_get_api_key: no cached key — attempting JS bundle extraction")
+  # 3. JS bundle extraction
+  log.info("_get_api_key: no env var or cache — attempting JS bundle extraction")
   extracted = _extract_key_from_bundle()
   if extracted:
     try:
@@ -232,10 +236,10 @@ def _get_api_key() -> str:
       log.warning("_get_api_key: could not write key cache: %s", e)
     return extracted
 
-  # 3. All paths exhausted
+  # 4. All paths exhausted
   raise PinnacleAuthError(
-    "Pinnacle static API key could not be extracted from JS bundle. "
-    "This key is required alongside the session token for API access."
+    "Pinnacle API key could not be extracted. "
+    "Set the PINNACLE_SESSION_COOKIE environment variable as a manual override."
   )
 
 
@@ -322,16 +326,6 @@ def fetch_cycling_h2h_markets() -> list:
     requests.RequestException: On network errors (timeout, connection failure).
   """
   api_key = _get_api_key()
-
-  # Get session token: env var override (D-05) or session manager (D-01, D-09)
-  env_session = os.environ.get("PINNACLE_SESSION_COOKIE", "").strip()
-  if env_session:
-    session_token = env_session
-    log.info("fetch_cycling_h2h_markets: using PINNACLE_SESSION_COOKIE env var override")
-  else:
-    from data.session_manager import get_session_token
-    session_token = get_session_token()
-
   retried = False
 
   while True:
@@ -340,6 +334,7 @@ def fetch_cycling_h2h_markets() -> list:
       "Referer": PINNACLE_HOME_URL,
       "Accept": "application/json",
     }
+    session_token = os.environ.get("PINNACLE_SESSION", "").strip()
     if session_token:
       headers["X-Session"] = session_token
 
@@ -367,14 +362,9 @@ def fetch_cycling_h2h_markets() -> list:
           leagues_resp.status_code,
         )
         _invalidate_key_cache()
-        from data.session_manager import invalidate_session
-        invalidate_session()
         api_key = _get_api_key()
-        # Re-acquire session token after invalidation
-        from data.session_manager import get_session_token as _get_fresh_session
-        session_token = _get_fresh_session()
         retried = True
-        continue  # retry with fresh key + session
+        continue  # retry with fresh key
 
       _check_auth(leagues_resp)
 

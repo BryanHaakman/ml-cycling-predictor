@@ -16,9 +16,6 @@ from flask import Flask, render_template, request, jsonify, Response
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dotenv import load_dotenv
-load_dotenv()  # Load .env before any os.environ.get() calls; does NOT overwrite existing env vars
-
 from data.scraper import get_db, DB_PATH
 from data.pnl import (
     get_pnl_db, place_bet, settle_bet, void_bet,

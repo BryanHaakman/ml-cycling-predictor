@@ -95,13 +95,10 @@ class TestOddsMarketDataclass(unittest.TestCase):
 class TestGetApiKey(unittest.TestCase):
   """Tests for _get_api_key() lookup chain."""
 
-  def test_returns_cached_key(self):
-    """Disk cache exists -> returns cached static API key."""
-    with patch("os.path.exists", return_value=True):
-      with patch("builtins.open", mock_open(read_data="CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R\n")):
-        with patch("data.odds.KEY_CACHE_PATH", "/fake/cache"):
-          key = _get_api_key()
-    self.assertEqual(key, "CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R")
+  def test_returns_env_var_when_set(self):
+    with patch.dict(os.environ, {"PINNACLE_SESSION_COOKIE": "testkey123"}, clear=False):
+      key = _get_api_key()
+    self.assertEqual(key, "testkey123")
 
   def test_returns_cache_when_env_absent(self):
     with patch.dict(os.environ, {}, clear=True):
@@ -127,113 +124,14 @@ class TestGetApiKey(unittest.TestCase):
           self.assertEqual(key, "bundlekey789")
 
   def test_raises_pinnacle_auth_error_when_all_paths_fail(self):
-    """When no cache and bundle extraction returns None -> raises PinnacleAuthError."""
-    with patch("data.odds.KEY_CACHE_PATH", "/nonexistent/path/cache"):
-      with patch("data.odds._extract_key_from_bundle", return_value=None):
-        with self.assertRaises(PinnacleAuthError) as ctx:
-          _get_api_key()
-        self.assertIn("API key", str(ctx.exception))
-
-
-class TestSessionTokenInFetch(unittest.TestCase):
-  """Tests for X-Session header integration in fetch_cycling_h2h_markets (D-10)."""
-
-  def test_env_var_sets_x_session_header(self):
-    """PINNACLE_SESSION_COOKIE env var -> sent as X-Session header (D-05)."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-      tmp_path = f.name
-    try:
-      with patch.dict(os.environ, {"PINNACLE_SESSION_COOKIE": "manual_session"}):
-        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
-          with patch("data.odds._get_api_key", return_value="static_key"):
-            with patch("requests.get") as mock_get:
-              resp = MagicMock()
-              resp.status_code = 200
-              resp.json.return_value = []
-              mock_get.return_value = resp
-              fetch_cycling_h2h_markets()
-              # Check the headers sent in the request
-              call_headers = mock_get.call_args[1]["headers"]
-              self.assertEqual(call_headers["X-Api-Key"], "static_key")
-              self.assertEqual(call_headers["X-Session"], "manual_session")
-    finally:
-      os.unlink(tmp_path)
-
-  def test_session_manager_called_when_no_env_var(self):
-    """No PINNACLE_SESSION_COOKIE -> get_session_token() called for X-Session."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-      tmp_path = f.name
-    try:
-      env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
-      with patch.dict(os.environ, env, clear=True):
-        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
-          with patch("data.odds._get_api_key", return_value="static_key"):
-            with patch("data.session_manager.get_session_token", return_value="playwright_session") as mock_st:
-              with patch("requests.get") as mock_get:
-                resp = MagicMock()
-                resp.status_code = 200
-                resp.json.return_value = []
-                mock_get.return_value = resp
-                fetch_cycling_h2h_markets()
-                mock_st.assert_called_once()
-                call_headers = mock_get.call_args[1]["headers"]
-                self.assertEqual(call_headers["X-Session"], "playwright_session")
-    finally:
-      os.unlink(tmp_path)
-
-  def test_no_x_session_when_session_manager_returns_none(self):
-    """get_session_token() returns None -> X-Session header not sent."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-      tmp_path = f.name
-    try:
-      env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
-      with patch.dict(os.environ, env, clear=True):
-        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
-          with patch("data.odds._get_api_key", return_value="static_key"):
-            with patch("data.session_manager.get_session_token", return_value=None):
-              with patch("requests.get") as mock_get:
-                resp = MagicMock()
-                resp.status_code = 200
-                resp.json.return_value = []
-                mock_get.return_value = resp
-                fetch_cycling_h2h_markets()
-                call_headers = mock_get.call_args[1]["headers"]
-                self.assertNotIn("X-Session", call_headers)
-    finally:
-      os.unlink(tmp_path)
-
-
-class TestInvalidateSessionOn401(unittest.TestCase):
-  """Tests that invalidate_session() is called on 401/403 retry (D-12)."""
-
-  def test_401_calls_invalidate_session(self):
-    """On 401 during fetch, invalidate_session() called alongside _invalidate_key_cache()."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-      tmp_path = f.name
-
-    try:
-      with patch.dict(os.environ, {"PINNACLE_SESSION_COOKIE": "initialkey"}):
-        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
-          with patch("data.odds._extract_key_from_bundle", return_value="newkey"):
-            with patch("requests.get") as mock_get:
-              auth_fail_resp = MagicMock()
-              auth_fail_resp.status_code = 401
-              auth_fail_resp.json.return_value = {"status": 401}
-
-              leagues_resp = MagicMock()
-              leagues_resp.status_code = 200
-              leagues_resp.json.return_value = []
-
-              mock_get.side_effect = [auth_fail_resp, leagues_resp]
-
-              with patch("data.odds._invalidate_key_cache") as mock_inv_cache:
-                with patch("data.session_manager.invalidate_session") as mock_inv_session:
-                  result = fetch_cycling_h2h_markets()
-                  mock_inv_cache.assert_called_once()
-                  mock_inv_session.assert_called_once()
-                  self.assertEqual(result, [])
-    finally:
-      os.unlink(tmp_path)
+    """When env absent, no cache, and bundle extraction returns None -> raises PinnacleAuthError."""
+    env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
+    with patch.dict(os.environ, env, clear=True):
+      with patch("data.odds.KEY_CACHE_PATH", "/nonexistent/path/cache"):
+        with patch("data.odds._extract_key_from_bundle", return_value=None):
+          with self.assertRaises(PinnacleAuthError) as ctx:
+            _get_api_key()
+          self.assertIn("PINNACLE_SESSION_COOKIE", str(ctx.exception))
 
 
 class TestCheckAuth(unittest.TestCase):
