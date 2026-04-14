@@ -33,7 +33,7 @@ def pinnacle_load():
   try:
     markets = fetch_cycling_h2h_markets()
   except PinnacleAuthError as e:
-    return jsonify({"error": str(e), "env_var": "PINNACLE_SESSION_COOKIE", "type": "auth_error"}), 401
+    return jsonify({"error": str(e), "type": "auth_error"}), 401
   except requests.RequestException as e:
     return jsonify({"error": "Pinnacle API unavailable", "detail": str(e), "type": "network_error"}), 503
   except Exception as e:
@@ -105,7 +105,7 @@ def pinnacle_refresh_odds():
   try:
     markets = fetch_cycling_h2h_markets()
   except PinnacleAuthError as e:
-    return jsonify({"error": str(e), "env_var": "PINNACLE_SESSION_COOKIE", "type": "auth_error"}), 401
+    return jsonify({"error": str(e), "type": "auth_error"}), 401
   except requests.RequestException as e:
     return jsonify({"error": "Pinnacle API unavailable", "detail": str(e), "type": "network_error"}), 503
   except Exception as e:
