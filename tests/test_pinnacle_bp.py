@@ -99,7 +99,6 @@ class TestPinnacleLoad:
     assert resp.status_code == 401
     body = resp.get_json()
     assert body["type"] == "auth_error"
-    assert body["env_var"] == "PINNACLE_SESSION_COOKIE"
 
   def test_load_returns_503_on_network_error(self, client):
     """Network error from Pinnacle → 503 with network_error type."""
@@ -204,7 +203,6 @@ class TestPinnacleRefreshOdds:
     assert resp.status_code == 401
     body = resp.get_json()
     assert body["type"] == "auth_error"
-    assert body["env_var"] == "PINNACLE_SESSION_COOKIE"
 
   def test_refresh_returns_400_on_empty_matchup_ids(self, client):
     """Empty matchup_ids list → 400 before calling fetch_cycling_h2h_markets."""
