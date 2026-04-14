@@ -3,11 +3,12 @@ Unit tests for data/odds.py — Pinnacle cycling H2H market client.
 
 Tests cover:
 - _american_to_decimal() conversion formula
-- _get_api_key() lookup chain (env var -> cache -> JS bundle)
+- _get_api_key() lookup chain (cache -> JS bundle, no PINNACLE_SESSION_COOKIE)
 - _check_auth() raises on 401/403
 - _append_audit_log() JSONL output
-- fetch_cycling_h2h_markets() flow, auth retry, and empty-market behavior
+- fetch_cycling_h2h_markets() 2-call sport-level flow, auth retry, and empty-market behavior
 - OddsMarket dataclass fields and types
+- Guest API constant, The Field filter, no X-Session header, race name from league
 """
 
 import dataclasses
@@ -17,7 +18,7 @@ import sys
 import tempfile
 import unittest
 import unittest.mock
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch, mock_open, call
 
 # Ensure repo root is on path for absolute imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -93,28 +94,21 @@ class TestOddsMarketDataclass(unittest.TestCase):
 
 
 class TestGetApiKey(unittest.TestCase):
-  """Tests for _get_api_key() lookup chain."""
+  """Tests for _get_api_key() lookup chain (cache -> JS bundle, no env var)."""
 
-  def test_returns_env_var_when_set(self):
-    with patch.dict(os.environ, {"PINNACLE_SESSION_COOKIE": "testkey123"}, clear=False):
-      key = _get_api_key()
-    self.assertEqual(key, "testkey123")
+  def test_returns_cache_when_available(self):
+    """Returns key from disk cache when file exists and is non-empty."""
+    env = {k: v for k, v in os.environ.items() if k not in ("PINNACLE_SESSION_COOKIE", "PINNACLE_SESSION")}
+    with patch.dict(os.environ, env, clear=True):
+      with patch("os.path.exists", return_value=True):
+        with patch("builtins.open", mock_open(read_data="cachedkey456\n")):
+          with patch("data.odds.KEY_CACHE_PATH", "/fake/cache"):
+            key = _get_api_key()
+      self.assertEqual(key, "cachedkey456")
 
-  def test_returns_cache_when_env_absent(self):
-    with patch.dict(os.environ, {}, clear=True):
-      # Remove the env var if present
-      env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
-      with patch.dict(os.environ, env, clear=True):
-        with patch("os.path.exists", return_value=True):
-          with patch("builtins.open", mock_open(read_data="cachedkey456\n")):
-            # Also patch KEY_CACHE_PATH check
-            with patch("data.odds.KEY_CACHE_PATH", "/fake/cache"):
-              key = _get_api_key()
-        self.assertEqual(key, "cachedkey456")
-
-  def test_calls_bundle_extraction_when_no_env_no_cache(self):
-    """When env var absent and no cache file, _extract_key_from_bundle() is called."""
-    env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
+  def test_calls_bundle_extraction_when_no_cache(self):
+    """When no cache file, _extract_key_from_bundle() is called."""
+    env = {k: v for k, v in os.environ.items() if k not in ("PINNACLE_SESSION_COOKIE", "PINNACLE_SESSION")}
     with patch.dict(os.environ, env, clear=True):
       with patch("data.odds.KEY_CACHE_PATH", "/nonexistent/path/cache"):
         with patch("data.odds._extract_key_from_bundle", return_value="bundlekey789") as mock_extract:
@@ -124,14 +118,13 @@ class TestGetApiKey(unittest.TestCase):
           self.assertEqual(key, "bundlekey789")
 
   def test_raises_pinnacle_auth_error_when_all_paths_fail(self):
-    """When env absent, no cache, and bundle extraction returns None -> raises PinnacleAuthError."""
-    env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
+    """When no cache and bundle extraction returns None -> raises PinnacleAuthError."""
+    env = {k: v for k, v in os.environ.items() if k not in ("PINNACLE_SESSION_COOKIE", "PINNACLE_SESSION")}
     with patch.dict(os.environ, env, clear=True):
       with patch("data.odds.KEY_CACHE_PATH", "/nonexistent/path/cache"):
         with patch("data.odds._extract_key_from_bundle", return_value=None):
-          with self.assertRaises(PinnacleAuthError) as ctx:
+          with self.assertRaises(PinnacleAuthError):
             _get_api_key()
-          self.assertIn("PINNACLE_SESSION_COOKIE", str(ctx.exception))
 
 
 class TestCheckAuth(unittest.TestCase):
@@ -146,14 +139,12 @@ class TestCheckAuth(unittest.TestCase):
     resp = self._make_response(401)
     with self.assertRaises(PinnacleAuthError) as ctx:
       _check_auth(resp)
-    self.assertIn("PINNACLE_SESSION_COOKIE", str(ctx.exception))
     self.assertIn("401", str(ctx.exception))
 
   def test_raises_on_403(self):
     resp = self._make_response(403)
     with self.assertRaises(PinnacleAuthError) as ctx:
       _check_auth(resp)
-    self.assertIn("PINNACLE_SESSION_COOKIE", str(ctx.exception))
     self.assertIn("403", str(ctx.exception))
 
   def test_does_not_raise_on_200(self):
@@ -231,28 +222,13 @@ class TestAppendAuditLog(unittest.TestCase):
 
 
 class TestFetchCyclingH2hMarkets(unittest.TestCase):
-  """Tests for fetch_cycling_h2h_markets()."""
+  """Tests for fetch_cycling_h2h_markets() with sport-level 2-call pattern."""
 
-  def _make_league_response(self, leagues: list) -> MagicMock:
+  def _make_response(self, data, status_code: int = 200) -> MagicMock:
     resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = leagues
+    resp.status_code = status_code
+    resp.json.return_value = data
     return resp
-
-  def _make_matchups_response(self, matchups: list) -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = matchups
-    return resp
-
-  def _make_markets_response(self, markets: list) -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = markets
-    return resp
-
-  def _sample_league(self):
-    return [{"id": 8227, "name": "Paris-Roubaix"}]
 
   def _sample_matchups(self):
     return [
@@ -262,6 +238,7 @@ class TestFetchCyclingH2hMarkets(unittest.TestCase):
           {"alignment": "home", "name": "Tomas Kopecky", "order": 0},
           {"alignment": "away", "name": "Brent van Moer", "order": 1},
         ],
+        "league": {"id": 8227, "name": "Paris-Roubaix"},
         "status": "pending",
         "type": "matchup",
       }
@@ -286,14 +263,12 @@ class TestFetchCyclingH2hMarkets(unittest.TestCase):
       tmp_path = f.name
 
     try:
-      with patch.dict(os.environ, {"PINNACLE_SESSION_COOKIE": "validkey"}):
+      with patch("data.odds._get_api_key", return_value="validkey"):
         with patch("data.odds.ODDS_LOG_PATH", tmp_path):
           with patch("requests.get") as mock_get:
-            # Leagues response with one league, no matchups
-            leagues_resp = self._make_league_response(self._sample_league())
-            matchups_resp = self._make_matchups_response([])
-            markets_resp = self._make_markets_response([])
-            mock_get.side_effect = [leagues_resp, matchups_resp, markets_resp]
+            matchups_resp = self._make_response([])
+            markets_resp = self._make_response([])
+            mock_get.side_effect = [matchups_resp, markets_resp]
 
             result = fetch_cycling_h2h_markets()
             self.assertEqual(result, [])
@@ -306,13 +281,12 @@ class TestFetchCyclingH2hMarkets(unittest.TestCase):
       tmp_path = f.name
 
     try:
-      with patch.dict(os.environ, {"PINNACLE_SESSION_COOKIE": "validkey"}):
+      with patch("data.odds._get_api_key", return_value="validkey"):
         with patch("data.odds.ODDS_LOG_PATH", tmp_path):
           with patch("requests.get") as mock_get:
-            leagues_resp = self._make_league_response(self._sample_league())
-            matchups_resp = self._make_matchups_response(self._sample_matchups())
-            markets_resp = self._make_markets_response(self._sample_markets())
-            mock_get.side_effect = [leagues_resp, matchups_resp, markets_resp]
+            matchups_resp = self._make_response(self._sample_matchups())
+            markets_resp = self._make_response(self._sample_markets())
+            mock_get.side_effect = [matchups_resp, markets_resp]
 
             result = fetch_cycling_h2h_markets()
             self.assertEqual(len(result), 1)
@@ -327,115 +301,509 @@ class TestFetchCyclingH2hMarkets(unittest.TestCase):
       os.unlink(tmp_path)
 
   def test_auth_401_invalidates_cache_and_retries(self):
-    """First 401 -> cache invalidated -> _extract_key_from_bundle called once -> retry succeeds."""
+    """First 401 -> cache invalidated -> retry once -> succeeds."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
       tmp_path = f.name
 
     try:
-      env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
-      with patch.dict(os.environ, env, clear=True):
-        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
-          with patch("data.odds.KEY_CACHE_PATH", "/fake/cache"):
-            with patch("data.odds._extract_key_from_bundle", return_value="newkey") as mock_extract:
-              with patch("requests.get") as mock_get:
-                # First request (leagues) -> 401
-                auth_fail_resp = MagicMock()
-                auth_fail_resp.status_code = 401
-                auth_fail_resp.json.return_value = {"status": 401, "detail": "No auth"}
+      with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+        with patch("data.odds._invalidate_key_cache") as mock_invalidate:
+          call_count = {"n": 0}
 
-                # Second request (leagues after retry) -> 200
-                leagues_resp = self._make_league_response(self._sample_league())
-                matchups_resp = self._make_matchups_response([])
-                markets_resp = self._make_markets_response([])
-                mock_get.side_effect = [
-                  auth_fail_resp,
-                  leagues_resp,
-                  matchups_resp,
-                  markets_resp,
-                ]
+          def mock_get_api_key():
+            call_count["n"] += 1
+            return "key" + str(call_count["n"])
 
-                # Simulate: first _get_api_key() call returns "oldkey" via env var
-                # After 401, _invalidate_key_cache is called (real), then _get_api_key()
-                # finds no env var and no cache -> calls _extract_key_from_bundle
-                # We patch _get_api_key to return "oldkey" on first call, then
-                # use real logic (which calls _extract_key_from_bundle) on retry
-                call_count = {"n": 0}
-                original_get_api_key = odds_module._get_api_key
-
-                def mock_get_api_key_side_effect():
-                  call_count["n"] += 1
-                  if call_count["n"] == 1:
-                    return "oldkey"
-                  # Second call: no env var, no cache -> extract from bundle
-                  return original_get_api_key()
-
-                with patch("data.odds._get_api_key", side_effect=mock_get_api_key_side_effect):
-                  with patch("data.odds._invalidate_key_cache") as mock_invalidate:
-                    # os.path.exists returns False so _extract_key_from_bundle is called
-                    with patch("os.path.exists", return_value=False):
-                      result = fetch_cycling_h2h_markets()
-                      mock_invalidate.assert_called_once()
-                      mock_extract.assert_called_once()
-                      self.assertEqual(result, [])
-    finally:
-      os.unlink(tmp_path)
-
-  def test_auth_401_raises_after_one_retry(self):
-    """First 401 -> re-extract -> second 401 -> raises PinnacleAuthError (no third attempt)."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-      tmp_path = f.name
-
-    try:
-      env = {k: v for k, v in os.environ.items() if k != "PINNACLE_SESSION_COOKIE"}
-      with patch.dict(os.environ, env, clear=True):
-        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
-          with patch("data.odds.KEY_CACHE_PATH", "/fake/cache"):
-            with patch("data.odds._extract_key_from_bundle", return_value="newkey"):
-              with patch("os.path.exists", return_value=True):
-                with patch("builtins.open", mock_open(read_data="oldkey\n")):
-                  with patch("requests.get") as mock_get:
-                    auth_fail_resp_1 = MagicMock()
-                    auth_fail_resp_1.status_code = 401
-                    auth_fail_resp_1.json.return_value = {"status": 401}
-
-                    auth_fail_resp_2 = MagicMock()
-                    auth_fail_resp_2.status_code = 401
-                    auth_fail_resp_2.json.return_value = {"status": 401}
-
-                    mock_get.side_effect = [auth_fail_resp_1, auth_fail_resp_2]
-
-                    with patch("data.odds._invalidate_key_cache"):
-                      with self.assertRaises(PinnacleAuthError):
-                        fetch_cycling_h2h_markets()
-
-                    # Verify no third attempt was made (only 2 calls)
-                    self.assertEqual(mock_get.call_count, 2)
-    finally:
-      os.unlink(tmp_path)
-
-  def test_auth_401_then_200_succeeds(self):
-    """First 401 -> re-extract -> second call 200 -> returns markets list, no raise."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-      tmp_path = f.name
-
-    try:
-      with patch.dict(os.environ, {"PINNACLE_SESSION_COOKIE": "initialkey"}):
-        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
-          with patch("data.odds._extract_key_from_bundle", return_value="newkey"):
+          with patch("data.odds._get_api_key", side_effect=mock_get_api_key):
             with patch("requests.get") as mock_get:
               auth_fail_resp = MagicMock()
               auth_fail_resp.status_code = 401
               auth_fail_resp.json.return_value = {"status": 401}
 
-              leagues_resp = self._make_league_response(self._sample_league())
-              matchups_resp = self._make_matchups_response(self._sample_matchups())
-              markets_resp = self._make_markets_response(self._sample_markets())
-              mock_get.side_effect = [auth_fail_resp, leagues_resp, matchups_resp, markets_resp]
+              matchups_resp = self._make_response([])
+              markets_resp = self._make_response([])
+              mock_get.side_effect = [auth_fail_resp, matchups_resp, markets_resp]
 
-              with patch("data.odds._invalidate_key_cache"):
-                result = fetch_cycling_h2h_markets()
-                self.assertIsInstance(result, list)
-                self.assertEqual(len(result), 1)
+              result = fetch_cycling_h2h_markets()
+              mock_invalidate.assert_called_once()
+              self.assertEqual(result, [])
+    finally:
+      os.unlink(tmp_path)
+
+  def test_auth_401_raises_after_one_retry(self):
+    """First 401 -> retry -> second 401 -> raises PinnacleAuthError."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+        with patch("data.odds._get_api_key", return_value="somekey"):
+          with patch("data.odds._invalidate_key_cache"):
+            with patch("requests.get") as mock_get:
+              auth_fail_resp_1 = MagicMock()
+              auth_fail_resp_1.status_code = 401
+
+              auth_fail_resp_2 = MagicMock()
+              auth_fail_resp_2.status_code = 401
+
+              mock_get.side_effect = [auth_fail_resp_1, auth_fail_resp_2]
+
+              with self.assertRaises(PinnacleAuthError):
+                fetch_cycling_h2h_markets()
+
+              # Verify no third attempt was made (only 2 calls)
+              self.assertEqual(mock_get.call_count, 2)
+    finally:
+      os.unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# New guest API tests
+# ---------------------------------------------------------------------------
+
+class TestGuestApiConstant(unittest.TestCase):
+  """Test that PINNACLE_API_BASE points to the guest API subdomain."""
+
+  def test_base_url_is_guest_subdomain(self):
+    from data.odds import PINNACLE_API_BASE
+    self.assertIn("guest.api.arcadia.pinnacle.com", PINNACLE_API_BASE)
+
+  def test_base_url_uses_https(self):
+    from data.odds import PINNACLE_API_BASE
+    self.assertTrue(PINNACLE_API_BASE.startswith("https://"))
+
+  def test_base_url_not_authed_subdomain(self):
+    """Ensure we're not accidentally using the auth-required subdomain."""
+    from data.odds import PINNACLE_API_BASE
+    # The auth-required subdomain is api.arcadia.pinnacle.com (not guest.api.*)
+    self.assertNotIn("https://api.arcadia.pinnacle.com", PINNACLE_API_BASE)
+
+
+class TestTheFieldFilter(unittest.TestCase):
+  """Test that matchups with 'The Field' participant are excluded from results."""
+
+  def _make_response(self, data, status_code: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = data
+    return resp
+
+  def test_field_as_rider_b_is_excluded(self):
+    """Matchup where rider_b is 'The Field' should not appear in results."""
+    matchups = [
+      {
+        "id": 1111,
+        "participants": [
+          {"alignment": "home", "name": "Ivan Romeo", "order": 0},
+          {"alignment": "away", "name": "The Field", "order": 1},
+        ],
+        "league": {"id": 999, "name": "O Gran Camino"},
+        "status": "pending",
+        "type": "matchup",
+      }
+    ]
+    markets = [
+      {
+        "matchupId": 1111,
+        "status": "open",
+        "type": "moneyline",
+        "prices": [
+          {"designation": "home", "price": -200},
+          {"designation": "away", "price": 150},
+        ],
+      }
+    ]
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response(matchups),
+              self._make_response(markets),
+            ]
+            result = fetch_cycling_h2h_markets()
+            self.assertEqual(result, [])
+    finally:
+      os.unlink(tmp_path)
+
+  def test_field_as_rider_a_is_excluded(self):
+    """Matchup where rider_a is 'The Field' should not appear in results."""
+    matchups = [
+      {
+        "id": 2222,
+        "participants": [
+          {"alignment": "home", "name": "The Field", "order": 0},
+          {"alignment": "away", "name": "Txomin Juaristi", "order": 1},
+        ],
+        "league": {"id": 999, "name": "O Gran Camino"},
+        "status": "pending",
+        "type": "matchup",
+      }
+    ]
+    markets = [
+      {
+        "matchupId": 2222,
+        "status": "open",
+        "type": "moneyline",
+        "prices": [
+          {"designation": "home", "price": -300},
+          {"designation": "away", "price": 200},
+        ],
+      }
+    ]
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response(matchups),
+              self._make_response(markets),
+            ]
+            result = fetch_cycling_h2h_markets()
+            self.assertEqual(result, [])
+    finally:
+      os.unlink(tmp_path)
+
+  def test_mixed_matchups_field_excluded_h2h_kept(self):
+    """When some matchups have The Field and some are H2H, only H2H are returned."""
+    matchups = [
+      {
+        "id": 1111,
+        "participants": [
+          {"alignment": "home", "name": "Ivan Romeo", "order": 0},
+          {"alignment": "away", "name": "The Field", "order": 1},
+        ],
+        "league": {"id": 999, "name": "O Gran Camino"},
+        "status": "pending",
+        "type": "matchup",
+      },
+      {
+        "id": 2222,
+        "participants": [
+          {"alignment": "home", "name": "Ivan Romeo", "order": 0},
+          {"alignment": "away", "name": "Txomin Juaristi", "order": 1},
+        ],
+        "league": {"id": 999, "name": "O Gran Camino"},
+        "status": "pending",
+        "type": "matchup",
+      },
+    ]
+    markets = [
+      {
+        "matchupId": 1111,
+        "status": "open",
+        "type": "moneyline",
+        "prices": [
+          {"designation": "home", "price": -200},
+          {"designation": "away", "price": 150},
+        ],
+      },
+      {
+        "matchupId": 2222,
+        "status": "open",
+        "type": "moneyline",
+        "prices": [
+          {"designation": "home", "price": -154},
+          {"designation": "away", "price": 107},
+        ],
+      },
+    ]
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response(matchups),
+              self._make_response(markets),
+            ]
+            result = fetch_cycling_h2h_markets()
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0].rider_a_name, "Ivan Romeo")
+            self.assertEqual(result[0].rider_b_name, "Txomin Juaristi")
+    finally:
+      os.unlink(tmp_path)
+
+
+class TestSportLevelFetch(unittest.TestCase):
+  """Test that fetch_cycling_h2h_markets makes exactly 2 sport-level calls."""
+
+  def _make_response(self, data, status_code: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = data
+    return resp
+
+  def test_exactly_two_http_calls(self):
+    """fetch_cycling_h2h_markets makes exactly 2 GET calls total."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response([]),
+              self._make_response([]),
+            ]
+            fetch_cycling_h2h_markets()
+            self.assertEqual(mock_get.call_count, 2)
+    finally:
+      os.unlink(tmp_path)
+
+  def test_first_call_is_sport_matchups_endpoint(self):
+    """First HTTP call goes to /sports/45/matchups."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response([]),
+              self._make_response([]),
+            ]
+            fetch_cycling_h2h_markets()
+            first_call_url = mock_get.call_args_list[0][0][0]
+            self.assertIn("/sports/45/matchups", first_call_url)
+    finally:
+      os.unlink(tmp_path)
+
+  def test_second_call_is_sport_markets_endpoint(self):
+    """Second HTTP call goes to /sports/45/markets/straight."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response([]),
+              self._make_response([]),
+            ]
+            fetch_cycling_h2h_markets()
+            second_call_url = mock_get.call_args_list[1][0][0]
+            self.assertIn("/sports/45/markets/straight", second_call_url)
+    finally:
+      os.unlink(tmp_path)
+
+
+class TestNoSessionHeader(unittest.TestCase):
+  """Test that no X-Session header is sent in any request."""
+
+  def _make_response(self, data, status_code: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = data
+    return resp
+
+  def test_no_x_session_header_in_matchups_call(self):
+    """X-Session header is NOT present in the matchups request."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response([]),
+              self._make_response([]),
+            ]
+            fetch_cycling_h2h_markets()
+            # Check headers of both calls
+            for call_args in mock_get.call_args_list:
+              headers = call_args[1].get("headers", {})
+              self.assertNotIn("X-Session", headers)
+    finally:
+      os.unlink(tmp_path)
+
+  def test_x_api_key_header_present(self):
+    """X-Api-Key courtesy header IS present in requests."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="testkey123"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response([]),
+              self._make_response([]),
+            ]
+            fetch_cycling_h2h_markets()
+            for call_args in mock_get.call_args_list:
+              headers = call_args[1].get("headers", {})
+              self.assertIn("X-Api-Key", headers)
+              self.assertEqual(headers["X-Api-Key"], "testkey123")
+    finally:
+      os.unlink(tmp_path)
+
+
+class TestRaceNameFromLeague(unittest.TestCase):
+  """Test that race_name is extracted from matchup['league']['name']."""
+
+  def _make_response(self, data, status_code: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = data
+    return resp
+
+  def test_race_name_from_matchup_league_name(self):
+    """OddsMarket.race_name equals matchup['league']['name']."""
+    matchups = [
+      {
+        "id": 5555,
+        "participants": [
+          {"alignment": "home", "name": "Rider A", "order": 0},
+          {"alignment": "away", "name": "Rider B", "order": 1},
+        ],
+        "league": {"id": 285810, "name": "O Gran Camino"},
+        "status": "pending",
+        "type": "matchup",
+      }
+    ]
+    markets = [
+      {
+        "matchupId": 5555,
+        "status": "open",
+        "type": "moneyline",
+        "prices": [
+          {"designation": "home", "price": -150},
+          {"designation": "away", "price": 120},
+        ],
+      }
+    ]
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response(matchups),
+              self._make_response(markets),
+            ]
+            result = fetch_cycling_h2h_markets()
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0].race_name, "O Gran Camino")
+    finally:
+      os.unlink(tmp_path)
+
+  def test_empty_matchups_returns_empty_list(self):
+    """When matchups endpoint returns [], result is [] with no error."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response([]),
+              self._make_response([]),
+            ]
+            result = fetch_cycling_h2h_markets()
+            self.assertEqual(result, [])
+    finally:
+      os.unlink(tmp_path)
+
+  def test_non_open_market_skipped(self):
+    """Matchup whose market status is not 'open' is skipped."""
+    matchups = [
+      {
+        "id": 6666,
+        "participants": [
+          {"alignment": "home", "name": "Rider A", "order": 0},
+          {"alignment": "away", "name": "Rider B", "order": 1},
+        ],
+        "league": {"id": 999, "name": "Test Race"},
+        "status": "pending",
+        "type": "matchup",
+      }
+    ]
+    markets = [
+      {
+        "matchupId": 6666,
+        "status": "suspended",  # not "open"
+        "type": "moneyline",
+        "prices": [
+          {"designation": "home", "price": -154},
+          {"designation": "away", "price": 107},
+        ],
+      }
+    ]
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response(matchups),
+              self._make_response(markets),
+            ]
+            result = fetch_cycling_h2h_markets()
+            self.assertEqual(result, [])
+    finally:
+      os.unlink(tmp_path)
+
+  def test_matchup_with_fewer_than_two_participants_skipped(self):
+    """Matchup with fewer than 2 participants is skipped gracefully."""
+    matchups = [
+      {
+        "id": 7777,
+        "participants": [
+          {"alignment": "home", "name": "Solo Rider", "order": 0},
+        ],
+        "league": {"id": 999, "name": "Test Race"},
+        "status": "pending",
+        "type": "matchup",
+      }
+    ]
+    markets = [
+      {
+        "matchupId": 7777,
+        "status": "open",
+        "type": "moneyline",
+        "prices": [
+          {"designation": "home", "price": -154},
+          {"designation": "away", "price": 107},
+        ],
+      }
+    ]
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+      tmp_path = f.name
+
+    try:
+      with patch("data.odds._get_api_key", return_value="key"):
+        with patch("data.odds.ODDS_LOG_PATH", tmp_path):
+          with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+              self._make_response(matchups),
+              self._make_response(markets),
+            ]
+            result = fetch_cycling_h2h_markets()
+            self.assertEqual(result, [])
     finally:
       os.unlink(tmp_path)
 
