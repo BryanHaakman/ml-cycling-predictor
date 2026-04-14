@@ -101,4 +101,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-11 — Milestone v1.0 started*
+*Last updated: 2026-04-14 — Phase 04.1 complete: guest API pivot, zero-auth odds client via guest.api.arcadia.pinnacle.com*
