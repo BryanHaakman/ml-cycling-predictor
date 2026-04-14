@@ -136,8 +136,8 @@ def _extract_key_from_bundle() -> Optional[str]:
 
     # Find the main JS bundle path — try several common patterns
     bundle_patterns = [
+      r'src="(/main\.[a-f0-9]+\.js)"',
       r'src="(/[^"]*main\.[a-f0-9]+\.chunk\.js)"',
-      r'src="(/[^"]*\.[a-f0-9]+\.js)"',
       r'src="(/en/sports/[^"]*\.js)"',
     ]
 

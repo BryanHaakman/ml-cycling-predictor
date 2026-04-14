@@ -829,16 +829,16 @@
                                     <span class="label">Full Kelly</span>
                                 </div>
                                 <div class="kelly-stat">
-                                    <span class="value positive">${(k.half_kelly * 100).toFixed(1)}%</span>
-                                    <span class="label">½ Kelly (Rec.)</span>
+                                    <span class="value positive">${(k.quarter_kelly * 100).toFixed(1)}%</span>
+                                    <span class="label">¼ Kelly (Rec.)</span>
                                 </div>
                             </div>
                             <div class="kelly-verdict ${k.should_bet ? 'bet' : 'no-bet'}">
                                 ${k.should_bet
-                                    ? `✅ VALUE BET — Stake ${(k.half_kelly * 100).toFixed(1)}% of bankroll (½ Kelly)`
+                                    ? `✅ VALUE BET — Stake ${(k.quarter_kelly * 100).toFixed(1)}% of bankroll (¼ Kelly)`
                                     : `❌ NO VALUE — Model sees no edge at these odds`}
                             </div>
-                            ${k.should_bet ? `<button class="btn btn-primary" style="margin-top:0.8rem;width:100%;" onclick="logBet(this)" data-name="${rider.name.replace(/"/g, '&quot;')}" data-url="${rider.url || ''}" data-prob="${rider.win_probability}" data-odds="${k.bookmaker_odds}" data-kelly="${k.half_kelly}">📝 Log This Bet</button>` : ''}
+                            ${k.should_bet ? `<button class="btn btn-primary" style="margin-top:0.8rem;width:100%;" onclick="logBet(this)" data-name="${rider.name.replace(/"/g, '&quot;')}" data-url="${rider.url || ''}" data-prob="${rider.win_probability}" data-odds="${k.bookmaker_odds}" data-kelly="${k.quarter_kelly}">📝 Log This Bet</button>` : ''}
                         </div>
                     `;
                 });
@@ -1397,7 +1397,7 @@
                     valueSide = 'A';
                     edge = kellyA.edge_pct;
                     edgeClass = 'edge-positive';
-                    halfKelly = (kellyA.half_kelly * 100).toFixed(1) + '%';
+                    halfKelly = (kellyA.quarter_kelly * 100).toFixed(1) + '%';
                     oddsStr = kellyA.bookmaker_odds.toFixed(2);
                     totalEdge += kellyA.edge;
                     valueBets++;
@@ -1405,7 +1405,7 @@
                     valueSide = 'B';
                     edge = kellyB.edge_pct;
                     edgeClass = 'edge-positive';
-                    halfKelly = (kellyB.half_kelly * 100).toFixed(1) + '%';
+                    halfKelly = (kellyB.quarter_kelly * 100).toFixed(1) + '%';
                     oddsStr = kellyB.bookmaker_odds.toFixed(2);
                     totalEdge += kellyB.edge;
                     valueBets++;
@@ -1487,15 +1487,15 @@
 
             if (betsToPlace.length === 0) return;
 
-            const totalStake = betsToPlace.reduce((sum, b) => sum + b.kelly.half_kelly * bankroll, 0);
-            if (!confirm(`Log ${betsToPlace.length} value bets?\n\nTotal stake: $${totalStake.toFixed(2)} CAD (½ Kelly each)\nCurrent bankroll: $${bankroll.toFixed(2)} CAD`)) return;
+            const totalStake = betsToPlace.reduce((sum, b) => sum + b.kelly.quarter_kelly * bankroll, 0);
+            if (!confirm(`Log ${betsToPlace.length} value bets?\n\nTotal stake: $${totalStake.toFixed(2)} CAD (¼ Kelly each)\nCurrent bankroll: $${bankroll.toFixed(2)} CAD`)) return;
 
             btn.disabled = true;
             btn.textContent = '⏳ Logging bets...';
             let logged = 0;
 
             for (const bet of betsToPlace) {
-                const stake = (bet.kelly.half_kelly * bankroll).toFixed(2);
+                const stake = (bet.kelly.quarter_kelly * bankroll).toFixed(2);
                 if (parseFloat(stake) < 0.01) continue;
 
                 const res = await fetch('/api/pnl/bet', {
@@ -1513,7 +1513,7 @@
                         selection_name: bet.selection.name,
                         decimal_odds: bet.kelly.bookmaker_odds,
                         model_prob: bet.selection.win_probability,
-                        kelly_fraction: bet.kelly.half_kelly,
+                        kelly_fraction: bet.kelly.quarter_kelly,
                         stake: parseFloat(stake),
                         model_used: bet.model || 'CalibratedXGBoost',
                         notes: `Batch H2H: edge ${bet.kelly.edge_pct}`,

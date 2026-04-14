@@ -93,16 +93,17 @@ Pipeline: **Scrape → Build H2H Pairs → Engineer Features → Train Models �
 From `decision_log.md` — do not change without a logged experiment:
 
 - **Training data:** World Tour only (1.UWT, 2.UWT), all years 2018–2025
-- **Pair generation:** max_rank=50, 200 pairs/stage (~292K WT pairs)
-- **Features:** 424 columns (20 race + rider absolute/diff/interaction + startlist-relative + H2H + course-type + one-day form)
+- **Pair generation:** max_rank=50, 200 pairs/stage (~292K pairs)
+- **Features:** 474 columns before selection → **top 150 by permutation importance** (default `--select-features 150`)
 - **Split:** Stratified stage split (default `--split stratified`; time-based available via `--split time`)
-- **Best model:** CalibratedXGBoost — 69.6% accuracy, 0.770 ROC-AUC (post-audit-fix run 2026-04-10)
-- **Training time:** ~79 min first run (22 min feature matrix + 57 min models); incremental runs faster as cache is warm
+- **Best model:** CalibratedXGBoost — 69.7% accuracy, 0.772 ROC-AUC (2026-04-13 run)
+- **Calibration:** All bins within 3% — high-confidence (70%+) picks at 82.6% accuracy
+- **Training time:** ~94 min total (22 min features, 12 min selector XGBoost, 53 min permutation importance, 7 min final models); incremental runs faster as cache is warm
 - **Feature cache:** `data/rider_features_cache.parquet` + `data/race_features_cache.parquet`
-- **NN skipped by default** (use `--nn` flag to include; adds ~1 min, no accuracy gain)
+- **Models:** XGBoost + CalibratedXGBoost only (LR, RF, NN removed)
 - **Pair sampling seed:** default `seed=42` in `build_pairs_sampled` — training is now reproducible
 
-Top features by importance (2026-04-10 run): `diff_career_top10_rate` (0.134), `diff_form_180d_top10` (0.021), `interact_diff_sprint_x_flat` (0.018), `diff_field_rank_quality` (0.014), `interact_diff_terrain_x_form` (0.013).
+Top features by XGBoost gain (2026-04-13 run): `diff_career_top10_rate` (0.136), `interact_diff_sprint_x_flat` (0.038), `diff_form_180d_top10` (0.029), `diff_form_last10_best_rank` (0.028), `diff_terrain_same_profile_top10` (0.024).
 
 ---
 
@@ -136,7 +137,7 @@ Use MCP for live/upcoming data. Use `cache.db` for historical training data. The
 ## Betting Logic
 
 - **Edge threshold:** flag at >5%, act at >8%
-- **Bet sizing:** half Kelly, max 10% bankroll per bet (`max_fraction=0.20` in `kelly_criterion()`). Quarter Kelly shown as conservative alternative. No confidence scaling — raw Kelly for maximum long-run ROI.
+- **Bet sizing:** quarter Kelly (recommended), max 5% bankroll per bet (`max_fraction=0.20` in `kelly_criterion()`). Switched from half Kelly on 2026-04-14 to prolong testing bankroll. No confidence scaling — raw Kelly for maximum long-run ROI.
 - **Bet placement is always manual on Pinnacle** — no automated execution
 - **CLV (closing line value)** is the primary model validity signal — track on every bet, not just wins
 - Every bet logged to `data/bets.csv`: date, race, stage, matchup, rider_backed, odds_at_bet, stake, result, closing_odds, clv, pnl, notes

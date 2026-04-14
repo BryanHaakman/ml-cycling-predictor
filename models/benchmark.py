@@ -107,14 +107,18 @@ def _select_features(X_train_scaled, y_train, X_test_scaled, y_test,
     """Select top-N features by permutation importance on a raw XGBoost."""
     from sklearn.inspection import permutation_importance
 
-    log.info(f"Feature selection: training XGBoost on all {len(feature_names)} features...")
+    log.info(f"Feature selection: training XGBoost on all {len(feature_names)} features (300 rounds)...")
     selector_model = xgb.XGBClassifier(
         n_estimators=300, max_depth=8, learning_rate=0.05,
         subsample=0.8, colsample_bytree=0.8,
         min_child_weight=10, reg_alpha=0.1, reg_lambda=1.0,
         random_state=42, eval_metric="logloss",
     )
-    selector_model.fit(X_train_scaled, y_train, verbose=False)
+    selector_model.fit(
+        X_train_scaled, y_train,
+        eval_set=[(X_test_scaled, y_test)],
+        verbose=50,
+    )
 
     log.info("Computing permutation importance...")
     perm = permutation_importance(
@@ -245,21 +249,25 @@ def run_benchmark(
     models = {}
 
     # --- XGBoost ---
-    log.info("Training XGBoost...")
+    log.info("Training XGBoost (300 rounds)...")
     xgb_model = xgb.XGBClassifier(
         n_estimators=300, max_depth=8, learning_rate=0.05,
         subsample=0.8, colsample_bytree=0.8,
         min_child_weight=10, reg_alpha=0.1, reg_lambda=1.0,
         random_state=42, eval_metric="logloss",
     )
-    xgb_model.fit(X_train_scaled, y_train, verbose=False)
+    xgb_model.fit(
+        X_train_scaled, y_train,
+        eval_set=[(X_test_scaled, y_test)],
+        verbose=50,
+    )
     xgb_prob = xgb_model.predict_proba(X_test_scaled)[:, 1]
     xgb_pred = (xgb_prob >= 0.5).astype(int)
     results.append(evaluate_model("XGBoost", y_test, xgb_pred, xgb_prob))
     models["XGBoost"] = xgb_model
 
     # --- Calibrated XGBoost (for betting) ---
-    log.info("Training Calibrated XGBoost...")
+    log.info("Training Calibrated XGBoost (5-fold CV × 300 rounds each — no per-fold progress)...")
     cal_xgb = CalibratedClassifierCV(
         xgb.XGBClassifier(
             n_estimators=300, max_depth=8, learning_rate=0.05,

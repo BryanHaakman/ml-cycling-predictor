@@ -36,8 +36,8 @@ class KellyResult:
             f"Edge: {self.edge:.1%} | "
             f"EV per £1: £{self.expected_value:.3f} | "
             f"Full Kelly: {self.kelly_fraction:.1%} of bankroll | "
-            f"Half Kelly (rec.): {self.half_kelly:.1%} | "
-            f"Quarter Kelly: {self.quarter_kelly:.1%}"
+            f"Half Kelly: {self.half_kelly:.1%} | "
+            f"Quarter Kelly (rec.): {self.quarter_kelly:.1%}"
         )
 
 

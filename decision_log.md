@@ -911,3 +911,41 @@ Key observations:
 **Results:** Merge committed as e69b613. No training run performed — pipeline changes require review before retraining.
 
 **Conclusion:** Upstream ML improvements are now integrated. Items to address: multi-model support in `models/benchmark.py` (upstream stripped to XGBoost-only, conflicts with our CalibratedXGBoost-first approach), and validation that feature selection default (150) is compatible with our full pipeline including Pinnacle batch predictions.
+
+---
+
+## 2026-04-13 — Post-merge retrain with top-150 feature selection
+
+**Hypothesis:** Validate full pipeline after upstream merge. First training run with merged codebase including variance features, feature selection, and updated pair builder.
+
+**Method:** `python -u scripts/train.py` (defaults: `--select-features 150`, stratified split, WT-only off). 291,576 pairs, 474 feature columns before selection → 150 after permutation importance ranking.
+
+**Results:**
+| Model | Accuracy | ROC-AUC | Log Loss | Brier Score |
+|-------|----------|---------|----------|-------------|
+| CalibratedXGBoost | 0.6965 | 0.7718 | 0.5697 | 0.1943 |
+| XGBoost | 0.6950 | 0.7698 | 0.5713 | 0.1950 |
+
+Calibration (CalibratedXGBoost):
+| Confidence Band | Model Avg | Actual Win% | Count |
+|-----------------|-----------|-------------|-------|
+| 50–55% | 52.5% | 52.1% | 4,313 |
+| 55–60% | 57.5% | 59.4% | 4,123 |
+| 60–65% | 62.5% | 63.4% | 3,836 |
+| 65–70% | 67.5% | 67.9% | 3,799 |
+| 70–75% | 72.4% | 74.8% | 3,333 |
+| 75–80% | 77.4% | 78.9% | 2,826 |
+| 80–100% | 87.6% | 88.4% | 6,305 |
+
+All calibration bins pass (within 3%). High-confidence (70%+) picks: 82.6% accuracy (n=12,464).
+
+By race type: One-day 66.9%, Stage race 70.3%.
+By course type: Flat 70.5%, Hilly 68.6%, Mountain 71.0%.
+
+Top 10 features by permutation importance: `race_profile_score`, `interact_diff_tt_x_itt`, `interact_diff_sprint_x_flat`, `diff_spec_gc_pct`, `diff_spec_climber_pct`, `diff_career_top10_rate`, `diff_age`, `race_distance_km`, `diff_spec_hills_pct`, `race_vert_per_km`.
+
+Top 10 features by XGBoost gain: `diff_career_top10_rate` (0.136), `interact_diff_sprint_x_flat` (0.038), `diff_form_180d_top10` (0.029), `diff_form_last10_best_rank` (0.028), `diff_terrain_same_profile_top10` (0.024), `interact_diff_terrain_x_form` (0.017), `diff_form_last5_best_rank` (0.016), `interact_diff_tt_x_itt` (0.016), `diff_spec_gc_pct` (0.015), `diff_form_30d_top10` (0.014).
+
+Timing: Feature matrix 21m 36s, selector XGBoost 11m 37s, permutation importance 53m, final models ~7m. Total: 93m 33s.
+
+**Conclusion:** Pipeline works end-to-end post-merge. Results are consistent with pre-merge performance (69.7% accuracy, 0.772 AUC). Calibration is excellent across all bins. Feature count grew from 424 → 474 (50 new variance features from upstream). The 150-feature selection reduces to a stable, performant subset. Permutation importance is the slowest step (53 min) — consider caching or reducing repeats in future.
