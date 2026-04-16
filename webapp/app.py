@@ -11,7 +11,7 @@ import threading
 import time
 import queue
 
-from flask import Flask, render_template, request, jsonify, Response, redirect, session, url_for
+from flask import Flask, render_template, request, jsonify, Response
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,13 +23,11 @@ from data.pnl import (
     set_initial_bankroll, auto_settle_from_results,
 )
 from models.predict import Predictor, kelly_criterion, decimal_odds_to_implied_prob
-from webapp.auth import _require_localhost, init_passcode_gate, get_passcode
+from webapp.auth import _require_localhost
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32))
-init_passcode_gate(app)
 
 from webapp.pinnacle_bp import pinnacle_bp
 app.register_blueprint(pinnacle_bp)
@@ -61,24 +59,6 @@ def get_predictor():
 @app.route("/")
 def index():
     return render_template("index.html")
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    """Passcode login gate."""
-    error = None
-    if request.method == "POST":
-        if request.form.get("passcode") == get_passcode():
-            session["authenticated"] = True
-            return redirect(url_for("index"))
-        error = "Incorrect passcode."
-    return render_template("login.html", error=error)
-
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
 
 
 @app.route("/api/riders")
