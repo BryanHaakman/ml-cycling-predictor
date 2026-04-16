@@ -18,7 +18,31 @@ from typing import Optional
 from tqdm import tqdm
 from procyclingstats import Race, Stage, Rider
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "cache.db")
+_DATA_DIR = os.path.dirname(__file__)
+_DEFAULT_DB = os.path.join(_DATA_DIR, "cache.db")
+_SNAPSHOT = os.path.join(_DATA_DIR, "db_snapshot.sql.gz")
+
+
+def _resolve_db_path() -> str:
+  """Return the path to cache.db, restoring from snapshot on Vercel if needed."""
+  if os.path.exists(_DEFAULT_DB):
+    return _DEFAULT_DB
+
+  # Serverless (Vercel): filesystem is read-only except /tmp.
+  # Restore the gzipped snapshot there on cold start.
+  if os.path.exists(_SNAPSHOT):
+    import gzip
+    tmp_db = "/tmp/cache.db"
+    if not os.path.exists(tmp_db):
+      with gzip.open(_SNAPSHOT, "rb") as src, open(tmp_db, "wb") as dst:
+        while chunk := src.read(1024 * 1024):
+          dst.write(chunk)
+    return tmp_db
+
+  return _DEFAULT_DB  # fallback — get_db will create an empty DB
+
+
+DB_PATH = _resolve_db_path()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)

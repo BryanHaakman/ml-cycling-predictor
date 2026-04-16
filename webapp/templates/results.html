@@ -126,6 +126,7 @@
                 <a href="/results" class="active">Results</a>
                 <a href="/pnl">P&L Tracker</a>
                 <a href="/admin">Admin</a>
+                {% if session.get('authenticated') %}<a href="/logout" style="font-size:0.8rem;">Logout</a>{% endif %}
             </nav>
         </header>
 

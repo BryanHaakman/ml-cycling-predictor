@@ -264,7 +264,7 @@
         <header>
             <h1>🚴 Cycling <span>H2H</span> Predictor</h1>
             <p>ML-powered head-to-head predictions with Kelly Criterion staking</p>
-            <nav style="margin-top:0.5rem;"><a href="/" style="color:var(--accent);text-decoration:none;margin-right:1rem;">Predictions</a><a href="/results" style="color:var(--muted);text-decoration:none;margin-right:1rem;">Results</a><a href="/pnl" style="color:var(--muted);text-decoration:none;margin-right:1rem;">P&L Tracker</a><a href="/admin" style="color:var(--muted);text-decoration:none;">Admin</a></nav>
+            <nav style="margin-top:0.5rem;"><a href="/" style="color:var(--accent);text-decoration:none;margin-right:1rem;">Predictions</a><a href="/results" style="color:var(--muted);text-decoration:none;margin-right:1rem;">Results</a><a href="/pnl" style="color:var(--muted);text-decoration:none;margin-right:1rem;">P&L Tracker</a><a href="/admin" style="color:var(--muted);text-decoration:none;">Admin</a>{% if session.get('authenticated') %}<a href="/logout" style="color:var(--muted);text-decoration:none;margin-left:1rem;font-size:0.8rem;">Logout</a>{% endif %}</nav>
         </header>
 
         <div class="top-mode-toggle">
