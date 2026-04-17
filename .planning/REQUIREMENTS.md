@@ -32,18 +32,53 @@
 - [ ] **UI-03**: All auto-populated fields (stage details, rider selections, odds) remain individually editable before running predictions
 - [ ] **UI-04**: User can click "Refresh Odds" to re-fetch current Pinnacle odds and update odds fields in an already-loaded session without clearing stage context or rider selections
 
-## v2 Requirements
+## v2 Requirements — Edge Validation & System Maturity
 
-### Intelligence Pipeline
+*Derived from deep assessment (2026-04-17). Prioritized by impact x effort. Execution order: Phase 1 → gate decision → Phase 2 → Phase 3.*
 
-- **INTEL-01**: System runs per-matchup qualitative research via Claude Haiku (web search → signal extraction → flag)
-- **INTEL-02**: System assembles and emails an HTML intelligence report once daily after the nightly data pipeline completes
-- **INTEL-03**: Report includes per-matchup qual flags (domestique, fatigue, injury, protected) with source citations
-- **INTEL-04**: System triggers automatically via GitHub Actions webhook after nightly data fetch succeeds
+### Phase 1: Validate the Edge (Weeks 1-3)
 
-### Bet Logging Integration
+- **CLV-01**: System records closing odds (odds_a, odds_b) for every bet at race start time
+- **CLV-02**: System computes CLV per bet as (closing_implied_prob - opening_implied_prob) and stores it with the bet record
+- **CLV-03**: System generates a weekly CLV summary report (average CLV, CLV by edge bucket, CLV trend over time)
+- **EDGE-01**: System produces an edge-bucket ROI analysis — bets grouped by model edge (5-8%, 8-12%, 12%+) with realized ROI per bucket
+- **POLICY-01**: Single staking policy (quarter Kelly, max cap) documented in CLAUDE.md, enforced in code, with no competing definitions elsewhere
 
-- **BETLOG-01**: User can click "Log this bet" on a batch prediction result row, pre-filled with Pinnacle odds, recommended stake, and matchup details
+**Gate decision after Phase 1:**
+- CLV >= 1.5% average over 100+ bets → proceed to Phase 2
+- CLV < 0 average over 200 bets → kill the project
+- Between 0-1.5% → continue collecting data, defer Phase 2
+
+### Phase 2: Upgrade the Model (Weeks 4-8)
+
+- **MODEL-01**: Live startlist resolution via PCS MCP at prediction time — fix the `field_rank_quality=0.5` hardcode in `build_feature_vector_manual` (recovers importance-#3 feature)
+- **MODEL-02**: Pinnacle opening odds as a model input feature — learn the residual between model and market (requires sufficient forward odds collection from Phase 1)
+- **MODEL-03**: DNF/finish probability model — P(rider finishes | race, conditions, historical DNF rate, course type) combined with H2H model for composite prediction
+- **MODEL-04**: Pairwise ranking model (XGBRanker / LambdaMART) — optimize NDCG directly instead of binary cross-entropy; ensemble with current binary model if both add value
+- **MODEL-05**: Pre-race team-strength features (protected rider, team climber/sprinter strength, team UCI ranking) keyed to team-season to avoid leakage
+- **MODEL-06**: Stage-type specialization — train separate models for flat/hilly/mountain + ITT sub-model instead of one unified model
+
+**Success criteria:** Backtest ROI improvement >= 2pp vs Phase 1 baseline. No regression in calibration (ECE < 0.015). CLV improvement >= 1pp.
+
+### Phase 3: Automate & Scale (Weeks 9-12)
+
+- **AUTO-01**: Closing-odds scraper — automated Pinnacle odds snapshot at race start time (cron/script)
+- **AUTO-02**: Post-race automated settlement — results ingestion triggers CLV computation and bet settlement without manual intervention
+- **AUTO-03**: Pre-race report generation — per-stage markdown with picks, confidence, reasoning highlights, bankroll exposure
+- **AUTO-04**: Edge alerting — Discord/email notification when a live matchup exceeds edge threshold and passes model + calibration sanity checks
+- **AUTO-05**: Drift detection — rolling calibration and CLV monitoring with alerts when model performance degrades beyond threshold
+- **AUTO-06**: Multi-book odds polling — Pinnacle + Betfair exchange + one retail book for line shopping on large edges
+
+**Success criteria:** End-to-end matchup-to-settlement in < 5 minutes human effort per day. Zero manual data reconciliation for a full 2-week block.
+
+### Deferred / Backlog
+
+- **INTEL-01**: Per-matchup qualitative research via Claude API (web search → signal extraction → flag) — moved from original v2 scope; revisit after Phase 2 model upgrades prove value
+- **INTEL-02**: Daily HTML intelligence report via email — revisit after AUTO-03 (pre-race reports) is validated
+- **BETLOG-01**: "Log this bet" button on prediction result row — convenience feature, implement when CLV tracking (CLV-01) is stable
+- **SIM-01**: Monte Carlo race simulation (rider-level, 1000 races) — opens exacta/trifecta/stage-winner markets; high effort, revisit if H2H edge is proven
+- **SEQ-01**: Sequence model over per-rider career (transformer on last 50 race embeddings) — likely +1-2% AUC but very high effort vs XGB baseline
+- **LIVE-01**: Live in-running markets — huge EV upside but mid-race PCS data is unreliable; revisit only if static model proves profitable
 
 ## Out of Scope
 
@@ -51,12 +86,15 @@
 |---------|--------|
 | Automated bet placement | Permanently manual on Pinnacle — deliberate design choice |
 | Auto-load on page startup | Session cookie expires regularly; explicit trigger is safer and more predictable |
-| Real-time odds monitoring | Once-daily or on-demand is sufficient for this workflow |
-| VPS deployment changes | v1.0 is local Flask only; VPS work deferred to Intelligence Pipeline milestone |
-| Feature registry refactor | Does not block this milestone; deferred to avoid scope creep |
-| Claude API qualitative research | Planned for v1.1 Intelligence Pipeline milestone |
+| VPS deployment changes | v1.0 is local Flask only; VPS work deferred |
+| Feature registry refactor | Does not block current work; deferred to avoid scope creep |
 | Multi-user support | Personal tool — single user only |
-| OAuth / Pinnacle API key | Session cookie approach is sufficient; official API access not available |
+| OAuth / Pinnacle API key | Session cookie / guest API approach is sufficient; official API access not available |
+| Historical odds backtest | Forward CLV tracking chosen over historical odds reconstruction — cycling H2H historical odds are too sparse to backfill reliably |
+| Multi-agent architecture | Automation jobs implemented as scripts/crons, not a formal agent system |
+| Monte Carlo race simulation | Backlog (SIM-01) — high effort, revisit if H2H edge is proven |
+| Sequence model (transformer) | Backlog (SEQ-01) — very high effort vs XGB baseline |
+| Live in-running markets | Backlog (LIVE-01) — mid-race PCS data unreliable |
 
 ## Traceability
 

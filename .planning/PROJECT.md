@@ -48,13 +48,16 @@ Edge detection: surfacing when PaceIQ's win probability differs from Pinnacle's 
 
 ### Out of Scope
 
-- Automated email reports — planned for v1.1 (Daily Intelligence Pipeline milestone)
-- Claude API qualitative research — planned for v1.1
-- VPS deployment changes — no infrastructure work in this milestone
+- Automated email reports — deferred to v2.0 Phase 3 (AUTO-03/04)
+- Claude API qualitative research — deferred to backlog (INTEL-01); revisit after model upgrades prove value
+- VPS deployment changes — no infrastructure work in v1.0
 - Automated bet placement — permanently manual on Pinnacle
-- Feature registry refactor — deferred; does not block intelligence layer
-- Real-time odds monitoring — once-daily or on-demand is sufficient
+- Feature registry refactor — deferred; does not block current work
+- Real-time odds monitoring — once-daily or on-demand is sufficient for v1.0; continuous polling in v2.0 Phase 3
 - Multi-user support — personal tool only
+- Monte Carlo race simulation — backlog (SIM-01); high effort, revisit if H2H edge is proven
+- Sequence model (transformer) — backlog (SEQ-01); very high effort vs XGB baseline
+- Live in-running markets — backlog (LIVE-01); mid-race data unreliable
 
 ## Context
 
@@ -82,6 +85,69 @@ Edge detection: surfacing when PaceIQ's win probability differs from Pinnacle's 
 | Odds-only refresh endpoint separate from full load | Re-fetching PCS on every odds check is wasteful; stage context doesn't change intraday | — Pending |
 | rapidfuzz for name resolution | Free, no API key, fast fuzzy string matching; sufficient for accent/abbreviation variants | — Pending |
 | Session cookie stored as env var, never committed | Security; cookie expires regularly and must be manually refreshed | ✓ Good |
+
+## Next Milestone: v2.0 — Edge Validation & System Maturity
+
+**Goal:** Prove or disprove that PaceIQ has a real betting edge, then — if the edge is real — upgrade the model and automate the daily workflow.
+
+**Prerequisite:** v1.0 (Phase 5: Frontend Integration) must be completed first.
+
+**Validation strategy:** Forward CLV tracking on live bets (no historical backtest). The model's ability to beat Pinnacle's closing line is the primary signal.
+
+### Phase Structure (90 days)
+
+| Phase | Weeks | Focus | Gate |
+|-------|-------|-------|------|
+| 1. Validate the Edge | 1-3 | CLV tracking, edge-bucket ROI analysis, staking policy lock | CLV >= 1.5% over 100+ bets → Phase 2 |
+| 2. Upgrade the Model | 4-8 | Startlist fix, market odds feature, DNF model, XGBRanker, team features, stage specialization | ROI improvement >= 2pp, no calibration regression |
+| 3. Automate & Scale | 9-12 | Closing-odds scraper, auto-settlement, pre-race reports, edge alerts, drift detection, multi-book | < 5 min human effort/day end-to-end |
+
+### Kill / Keep Criteria
+
+- **Kill:** 200 live bets with average CLV < 0 → stop. No amount of feature engineering fixes a model the market has already priced.
+- **Keep:** Backtest + live CLV both positive at >= 1.5% → invest in Phase 2. Calibration bins within 3% on out-of-sample → betting math works, focus on signal.
+- **Gray zone:** CLV between 0-1.5% over 100 bets → continue collecting data, defer Phase 2 model upgrades until signal is clearer.
+
+### Priority-Ranked Opportunities (from assessment)
+
+| Priority | Opportunity | Impact | Effort | Phase |
+|----------|-------------|--------|--------|-------|
+| 1 | CLV tracking + closing-odds capture | 10 | 2 | 1 |
+| 2 | Edge-bucket ROI analysis | 8 | 3 | 1 |
+| 3 | Staking policy reconciliation | 10 | 1 | 1 |
+| 4 | Live startlist resolution (fix field_rank_quality=0.5) | 8 | 3 | 2 |
+| 5 | DNF/finish probability model | 8 | 3 | 2 |
+| 6 | Market odds as feature | 10 | 2 | 2 |
+| 7 | Pairwise ranking (XGBRanker) | 7 | 5 | 2 |
+| 8 | Team-strength features | 7 | 5 | 2 |
+| 9 | Stage-type specialization (3 models) | 7 | 5 | 2 |
+| 10 | Automated settlement + CLV computation | 8 | 3 | 3 |
+| 11 | Pre-race report generation | 7 | 4 | 3 |
+| 12 | Edge alerting (Discord/email) | 7 | 4 | 3 |
+| 13 | Multi-book odds polling | 8 | 8 | 3 |
+| 14 | Drift detection + auto-retraining | 7 | 5 | 3 |
+
+### Known Weaknesses (from assessment, to address)
+
+- Stratified split overestimates live performance by ~1.3% — time-based number (~68.5% / 0.755 AUC) is closer to reality
+- 26 bets is statistically uninformative (95% CI ±17% on win rate)
+- `simulate_pnl.py` is self-referential (synthetic odds from model probs) — not a real backtest; replace with forward CLV reporting
+- Staking docs/code/behavior disagree — must reconcile in Phase 1
+- Specialty scores are static PCS numbers, not learned — coarse signal
+- No team/tactical features (attempted, reverted for leakage — correct fix is pre-race team roster features)
+
+### Automation Jobs (extracted from assessment agent roster)
+
+These are the *jobs* to automate as scripts/crons, not a multi-agent architecture:
+
+| Job | Trigger | What it does |
+|-----|---------|-------------|
+| Closing-odds capture | Cron at race start time | Snapshot Pinnacle odds, store as closing line |
+| Post-race settlement | Cron after race ends | Ingest results, compute CLV, settle bets |
+| Pre-race briefing | Cron T-2h before stage | Generate markdown report with picks + confidence |
+| Edge alert | Event: odds change with edge > threshold | Discord/email notification |
+| Drift monitor | Weekly cron | Rolling calibration + CLV check, alert if degraded |
+| Data freshness | Hourly cron | Check scrape_log for gaps, alert on coverage failures |
 
 ## Evolution
 
