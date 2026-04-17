@@ -12,12 +12,12 @@ This milestone adds a live data ingestion layer to the existing batch prediction
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Pinnacle API Discovery and Client** - Discover internal endpoint via Playwright, implement data/odds.py with session-cookie auth and structured error handling
-- [ ] **Phase 2: Name Resolver** - Implement data/name_resolver.py with exact/normalize/fuzzy/cache pipeline for Pinnacle-to-PCS name mapping
-- [ ] **Phase 3: Stage Context Fetcher** - Implement intelligence/stage_context.py to fetch live stage details via procyclingstats lib with graceful degradation
+- [x] **Phase 1: Pinnacle API Discovery and Client** - Discover internal endpoint via Playwright, implement data/odds.py with session-cookie auth and structured error handling (completed 2026-04-12)
+- [x] **Phase 2: Name Resolver** - Implement data/name_resolver.py with exact/normalize/fuzzy/cache pipeline for Pinnacle-to-PCS name mapping (completed 2026-04-13)
+- [x] **Phase 3: Stage Context Fetcher** - Implement intelligence/stage_context.py to fetch live stage details via procyclingstats lib with graceful degradation (completed 2026-04-13)
 - [x] **Phase 4: Flask Endpoint Wiring** - Integrate all three components into POST /api/pinnacle/load and POST /api/pinnacle/refresh-odds with locked response schema (completed 2026-04-12)
 - [x] **Phase 04.1: Guest API Pivot** - Revert failed Playwright experiment, switch to guest API (guest.api.arcadia.pinnacle.com) for zero-auth H2H odds (INSERTED, replanned 2026-04-13) (completed 2026-04-14)
-- [ ] **Phase 5: Frontend Integration** - Add "Load from Pinnacle" button, race selector, and "Refresh Odds" to batch H2H UI with per-cell dirty tracking
+- [x] **Phase 5: Frontend Integration** - Add "Load from Pinnacle" button, race selector, and "Refresh Odds" to batch H2H UI with per-cell dirty tracking (completed 2026-04-15)
 
 ## Phase Details
 
@@ -30,7 +30,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Calling fetch_cycling_h2h_markets() with an expired or invalid session cookie raises PinnacleAuthError with the message specifying the PINNACLE_SESSION_COOKIE env var — it does not return an empty list or raise a generic exception
   3. Every successful fetch appends a complete, parseable JSON line to data/odds_log.jsonl (verified by json.loads on each line after the call)
   4. The discovered endpoint URL, required headers, sport/market IDs, odds format (decimal vs American), and a full example response are documented in docs/pinnacle-api-notes.md before any client code is written
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [x] 01-01-PLAN.md — API endpoint discovery, OddsMarket dataclass, guest API client with error handling
+- [x] 01-02-PLAN.md — Audit logging, integration tests, live verification checkpoint
 
 ### Phase 2: Name Resolver
 **Goal**: A name resolver that maps every Pinnacle display name (SURNAME-FIRST, ALL-CAPS) to a PCS rider URL through a four-stage pipeline, caches accepted mappings persistently, and surfaces unresolved pairs for manual completion
@@ -94,8 +97,8 @@ Plans:
   4. User can click "Refresh Odds" in an already-loaded session; only odds fields tagged data-source="auto" are updated — cells the user has manually edited (data-source="user") are not overwritten, and stage context and rider selections are preserved
 **Plans:** 2 plans
 Plans:
-- [ ] 05-01-PLAN.md — Pinnacle control row HTML/CSS + loadFromPinnacle() + populatePinnacleRace() with race picker, stage population, pair creation, and unresolved rider handling
-- [ ] 05-02-PLAN.md — refreshOdds() with data-source dirty tracking + human verification checkpoint
+- [x] 05-01-PLAN.md — Pinnacle control row HTML/CSS + loadFromPinnacle() + populatePinnacleRace() with race picker, stage population, pair creation, and unresolved rider handling
+- [x] 05-02-PLAN.md — refreshOdds() with data-source dirty tracking + human verification checkpoint
 **UI hint**: yes
 
 ## Progress
@@ -105,9 +108,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 04.1 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Pinnacle API Discovery and Client | 0/TBD | Not started | - |
-| 2. Name Resolver | 0/2 | Planned | - |
-| 3. Stage Context Fetcher | 0/2 | Planned | - |
-| 4. Flask Endpoint Wiring | 1/1 | Complete   | 2026-04-12 |
-| 04.1. Guest API Pivot | 2/2 | Complete    | 2026-04-14 |
-| 5. Frontend Integration | 0/2 | Planned | - |
+| 1. Pinnacle API Discovery and Client | 2/2 | Complete | 2026-04-12 |
+| 2. Name Resolver | 2/2 | Complete | 2026-04-13 |
+| 3. Stage Context Fetcher | 2/2 | Complete | 2026-04-13 |
+| 4. Flask Endpoint Wiring | 1/1 | Complete | 2026-04-12 |
+| 04.1. Guest API Pivot | 2/2 | Complete | 2026-04-14 |
+| 5. Frontend Integration | 2/2 | Complete | 2026-04-15 |

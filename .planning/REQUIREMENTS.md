@@ -7,30 +7,30 @@
 
 ### Odds Ingestion
 
-- [ ] **ODDS-01**: System fetches today's H2H cycling markets from Pinnacle's internal API using a stored session cookie
-- [ ] **ODDS-02**: Raw odds data is appended to an audit log (`data/odds_log.jsonl`) after each successful fetch
-- [ ] **ODDS-03**: System shows a clear, actionable error message (including which env var to update) when the Pinnacle session cookie is expired or invalid
+- [x] **ODDS-01**: System fetches today's H2H cycling markets from Pinnacle's internal API using a stored session cookie
+- [x] **ODDS-02**: Raw odds data is appended to an audit log (`data/odds_log.jsonl`) after each successful fetch
+- [x] **ODDS-03**: System shows a clear, actionable error message (including which env var to update) when the Pinnacle session cookie is expired or invalid
 - [x] **ODDS-04**: System can re-fetch Pinnacle odds independently without re-loading stage context or re-resolving rider names
 
 ### Name Resolution
 
-- [ ] **NAME-01**: System resolves Pinnacle display names to PCS rider URLs via exact match against `cache.db` riders
-- [ ] **NAME-02**: System resolves names that differ only by accents, special characters, or casing via unicode normalization before fuzzy matching
-- [ ] **NAME-03**: System resolves ambiguous names via fuzzy matching (rapidfuzz); auto-accepts matches above confidence threshold without user input
-- [ ] **NAME-04**: Confirmed name→PCS URL mappings are cached persistently in `data/name_mappings.json` and used on future runs before fuzzy matching
-- [ ] **NAME-05**: Pairs where one or both riders could not be resolved are displayed in the UI with a manual rider search so the user can complete the match
+- [x] **NAME-01**: System resolves Pinnacle display names to PCS rider URLs via exact match against `cache.db` riders
+- [x] **NAME-02**: System resolves names that differ only by accents, special characters, or casing via unicode normalization before fuzzy matching
+- [x] **NAME-03**: System resolves ambiguous names via fuzzy matching (rapidfuzz); auto-accepts matches above confidence threshold without user input
+- [x] **NAME-04**: Confirmed name→PCS URL mappings are cached persistently in `data/name_mappings.json` and used on future runs before fuzzy matching
+- [x] **NAME-05**: Pairs where one or both riders could not be resolved are displayed in the UI with a manual rider search so the user can complete the match
 
 ### Stage Context
 
-- [ ] **STGE-01**: System fetches stage details (distance, elevation gain, climb counts/categories, race tier, stage type, profile icon) from PCS via the `procyclingstats` lib given a Pinnacle race name
-- [ ] **STGE-02**: Stage context fetch failure degrades gracefully — manual input fields remain available and prediction is not blocked
+- [x] **STGE-01**: System fetches stage details (distance, elevation gain, climb counts/categories, race tier, stage type, profile icon) from PCS via the `procyclingstats` lib given a Pinnacle race name
+- [x] **STGE-02**: Stage context fetch failure degrades gracefully — manual input fields remain available and prediction is not blocked
 
 ### Batch Prediction UI
 
-- [ ] **UI-01**: User can click "Load from Pinnacle" in the batch H2H prediction UI to fetch today's available cycling markets
-- [ ] **UI-02**: User can select a race from the fetched Pinnacle markets; selecting a race auto-populates all stage fields and all H2H pairs with odds
-- [ ] **UI-03**: All auto-populated fields (stage details, rider selections, odds) remain individually editable before running predictions
-- [ ] **UI-04**: User can click "Refresh Odds" to re-fetch current Pinnacle odds and update odds fields in an already-loaded session without clearing stage context or rider selections
+- [x] **UI-01**: User can click "Load from Pinnacle" in the batch H2H prediction UI to fetch today's available cycling markets
+- [x] **UI-02**: User can select a race from the fetched Pinnacle markets; selecting a race auto-populates all stage fields and all H2H pairs with odds
+- [x] **UI-03**: All auto-populated fields (stage details, rider selections, odds) remain individually editable before running predictions
+- [x] **UI-04**: User can click "Refresh Odds" to re-fetch current Pinnacle odds and update odds fields in an already-loaded session without clearing stage context or rider selections
 
 ## v2 Requirements — Edge Validation & System Maturity
 
@@ -100,27 +100,27 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ODDS-01 | Phase 1 | Pending |
-| ODDS-02 | Phase 1 | Pending |
-| ODDS-03 | Phase 1 | Pending |
+| ODDS-01 | Phase 1 | Complete |
+| ODDS-02 | Phase 1 | Complete |
+| ODDS-03 | Phase 1 | Complete |
 | ODDS-04 | Phase 4 | Complete |
-| NAME-01 | Phase 2 | Pending |
-| NAME-02 | Phase 2 | Pending |
-| NAME-03 | Phase 2 | Pending |
-| NAME-04 | Phase 2 | Pending |
-| NAME-05 | Phase 2 | Pending |
-| STGE-01 | Phase 3 | Pending |
-| STGE-02 | Phase 3 | Pending |
-| UI-01 | Phase 5 | Pending |
-| UI-02 | Phase 5 | Pending |
-| UI-03 | Phase 5 | Pending |
-| UI-04 | Phase 5 | Pending |
+| NAME-01 | Phase 2 | Complete |
+| NAME-02 | Phase 2 | Complete |
+| NAME-03 | Phase 2 | Complete |
+| NAME-04 | Phase 2 | Complete |
+| NAME-05 | Phase 2 | Complete |
+| STGE-01 | Phase 3 | Complete |
+| STGE-02 | Phase 3 | Complete |
+| UI-01 | Phase 5 | Complete |
+| UI-02 | Phase 5 | Complete |
+| UI-03 | Phase 5 | Complete |
+| UI-04 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 15 total
 - Mapped to phases: 15
-- Unmapped: 0 ✓
+- Complete: 15 ✓
 
 ---
 *Requirements defined: 2026-04-11*
-*Last updated: 2026-04-11 — traceability mapped (roadmap created)*
+*Last updated: 2026-04-17 — all requirements complete, milestone ready for archival*
