@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Edge Validation & System Maturity
 status: active
-stopped_at: Roadmap created — ready to plan Phase 6
+stopped_at: Phase 6 context gathered — ready to plan
 last_updated: "2026-04-18"
 last_activity: 2026-04-18
 progress:
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-04-18)
 
 Phase: 6 of 9 (Odds Scraping & CLV Infrastructure)
 Plan: —
-Status: Ready to plan
-Last activity: 2026-04-18 — Roadmap created for v2.0
+Status: Context gathered — ready to plan
+Last activity: 2026-04-18 — Phase 6 context gathered
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -65,9 +65,9 @@ Progress: [░░░░░░░░░░] 0%
 
 ### Blockers/Concerns
 
-- Pinnacle guest API (data/odds.py) is broken — Phase 6 must rebuild scraper via BeautifulSoup first
-- data/bets.csv vs bets table divergence: confirm which is authoritative before Phase 9 automation
-- Race start timezone resolution needs empirical validation (10:00 UTC default is an approximation)
+- Pinnacle guest API (data/odds.py) is broken — Phase 6 rebuilds scraper via Playwright (decided in context)
+- data/bets.csv deprecated — SQLite bets table is single source of truth (decided in Phase 6 context)
+- Race start times scraped from Pinnacle in EST (decided in Phase 6 context)
 
 ## Deferred Items
 
@@ -79,5 +79,5 @@ Progress: [░░░░░░░░░░] 0%
 ## Session Continuity
 
 Last session: 2026-04-18
-Stopped at: Roadmap created — 4 phases defined (6-9), 34/34 requirements mapped
-Resume file: None
+Stopped at: Phase 6 context gathered — 29 decisions captured across 4 areas
+Resume file: .planning/phases/06-odds-scraping-clv-infrastructure/06-CONTEXT.md
