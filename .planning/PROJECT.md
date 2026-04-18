@@ -48,7 +48,7 @@ Shipped v1.0 (Pinnacle Preload) on 2026-04-15 with ~9,800 LOC Python.
 
 ### Active
 
-(Next milestone requirements to be defined via `/gsd-new-milestone`)
+(Defined in REQUIREMENTS.md — v2.0 Edge Validation & System Maturity)
 
 ### Out of Scope
 
@@ -89,7 +89,7 @@ Shipped v1.0 (Pinnacle Preload) on 2026-04-15 with ~9,800 LOC Python.
 | diff_field_rank_quality neutral default | Startlist resolution deferred to v2.0 | — Pending v2.0 MODEL-01 |
 | Session cookie as env var | Security — never committed | ✓ Good (superseded by guest API, no cookie needed) |
 
-## Next Milestone: v2.0 — Edge Validation & System Maturity
+## Current Milestone: v2.0 Edge Validation & System Maturity
 
 **Goal:** Prove or disprove that PaceIQ has a real betting edge, then — if the edge is real — upgrade the model and automate the daily workflow.
 
@@ -153,4 +153,4 @@ Shipped v1.0 (Pinnacle Preload) on 2026-04-15 with ~9,800 LOC Python.
 This document evolves at phase transitions and milestone boundaries.
 
 ---
-*Last updated: 2026-04-18 after v1.0 milestone*
+*Last updated: 2026-04-18 after v2.0 milestone start*
