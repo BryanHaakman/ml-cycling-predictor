@@ -40,7 +40,13 @@
   3. Closing odds are captured per market at race start time; the bets table in cache.db has closing_odds_a, closing_odds_b, clv, clv_no_vig, and settled_at columns
   4. After PCS results are ingested, bets are auto-settled and CLV (raw and vig-free) is computed and written to the bets table
   5. The P&L UI shows per-bet CLV, rolling average CLV, 95% bootstrap confidence interval, and a CLV breakdown by stage type (flat/mountain/TT)
-**Plans**: TBD
+**Plans:** 5 plans
+Plans:
+- [ ] 06-01-PLAN.md — Playwright scraper module with snapshot storage
+- [ ] 06-02-PLAN.md — CLV schema, computation, settlement, bankroll, bet history filters
+- [ ] 06-03-PLAN.md — Flask API wiring (pinnacle_bp + CLV/bet endpoints)
+- [ ] 06-04-PLAN.md — Bet booking UI on batch prediction page
+- [ ] 06-05-PLAN.md — P&L CLV display (summary cards, chart, terrain table)
 **UI hint**: yes
 
 ### Phase 7: Edge Analysis & Risk Controls
@@ -91,7 +97,7 @@ Phases execute in numeric order: 6 → 7 → 8 (gated) → 9
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 6. Odds Scraping & CLV Infrastructure | v2.0 | 0/? | Not started | - |
+| 6. Odds Scraping & CLV Infrastructure | v2.0 | 0/5 | Planning complete | - |
 | 7. Edge Analysis & Risk Controls | v2.0 | 0/? | Not started | - |
 | 8. Model Upgrades | v2.0 | 0/? | Not started | - |
 | 9. Automation | v2.0 | 0/? | Not started | - |
