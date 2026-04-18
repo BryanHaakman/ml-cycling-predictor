@@ -1,200 +1,189 @@
-# Research Summary: PaceIQ v1.0 — Pinnacle Preload
+# Project Research Summary
 
-**Project:** PaceIQ v1.0 (Pinnacle Preload milestone)
-**Domain:** Reverse-engineered internal API client + fuzzy name resolution + scraper-backed stage context, integrated into an existing Flask/SQLite/ML prediction app
-**Researched:** 2026-04-11
-**Confidence:** MEDIUM (stack and architecture are HIGH; Pinnacle endpoint viability is LOW until discovery step completes)
-
----
+**Project:** PaceIQ v2.0 -- Edge Validation & System Maturity
+**Domain:** Sports betting intelligence -- CLV tracking, model upgrades, workflow automation for cycling H2H prediction
+**Researched:** 2026-04-18
+**Confidence:** HIGH
 
 ## Executive Summary
 
-PaceIQ v1.0 adds a pre-fill layer to an already-functional batch prediction UI. The user clicks "Load from Pinnacle", the app fetches today's H2H cycling markets from Pinnacle's internal web API, maps the displayed rider names to PCS URLs in `cache.db`, pulls stage details via the `procyclingstats` lib, and populates the batch form ready for one-click prediction. Nothing in the ML inference path changes — this milestone is entirely data plumbing that feeds the existing `POST /api/predict/batch` endpoint. The recommended approach is a strict build-order: discover the Pinnacle endpoint first (the only true unknown), then build the name resolver and stage context fetcher independently in parallel, wire them together in Flask, then add the frontend.
+PaceIQ v2.0 is a maturity and validation milestone for an existing, production-ready cycling H2H betting system. The v1.0 system achieved 69.7% prediction accuracy (0.772 ROC-AUC) on historical data using a CalibratedXGBoost model with 150 permutation-selected features from a 292K-pair training corpus -- but with only 26 live bets logged and no closing-odds infrastructure, it is impossible to determine whether that accuracy translates to a real edge against Pinnacle. The core research finding is unambiguous: CLV tracking against the Pinnacle closing line is the single most important capability to build first, and every other v2.0 feature should be sequenced around it. Closing Line Value is the industry-standard leading indicator for betting model validity, converging on actionable signal at 100-200 bets versus the thousands needed to confirm edge via win rate alone.
 
-The dominant risk is that Pinnacle's internal API endpoint structure is completely unknown until browser inspection is performed. Every other component can be built and tested in isolation with mocked data, but the Pinnacle client cannot be finalized until the real endpoint URL, required headers, and response schema are observed from a live browser session. A second systemic risk is name resolution accuracy: Pinnacle displays names in SURNAME-FIRST, ALL-CAPS format with ASCII-only rendering, which requires format normalization and accent stripping before fuzzy matching — if this is done wrong, mismatches are silently cached and corrupt future predictions. Both risks have clear mitigations and neither blocks starting work on the other components.
+The recommended approach is a three-phase layered build. Phase 1 establishes the measurement infrastructure (closing odds capture, CLV computation, edge-bucket ROI analysis) using only two new packages -- APScheduler 3.x for in-process scheduling and discord-webhook for alerts -- with all statistical analysis handled by the already-installed scipy 1.17.1. This is intentionally a data-collection phase: no model changes, no new features, no increased betting velocity until the CLV signal is confirmed. Phase 2 conditionally upgrades the ML pipeline (fix the known diff_field_rank_quality = 0.0 serving bug, resolve the 4 missing interaction groups in the manual prediction path, add DNF heuristic adjustment) only after Phase 1 establishes positive CLV. Phase 3 automates the workflow: pre-race briefings, scheduled closing-odds capture, and drift monitoring.
 
-The net stack change for this milestone is minimal: one new production library (`rapidfuzz>=3.14.3`), one pin upgrade (`procyclingstats>=0.2.8`), and Playwright as a one-time dev discovery tool that never reaches the VPS. No new infrastructure, no schema changes to `cache.db`, and no ML code changes. The integration surface in `webapp/app.py` is narrow: two new routes and three new imports.
-
----
+The dominant risks are technical precision risks, not architectural unknowns. Three stand out. First, market odds added to model training introduces look-ahead leakage if historical Pinnacle odds are not available at a consistent pre-race time horizon -- the safe mitigation is to use market odds only at inference time until a systematic historical odds corpus exists. Second, the existing build_feature_vector_manual function is silently missing four interaction groups including interact_diff_quality_x_form (the second most important feature by XGBoost gain) -- every live bet placed today is degraded by this bug, and it must be fixed before any new features are added to the pipeline. Third, automated closing-odds capture must resolve race start timezones correctly (local race time vs UTC) or the market will be suspended before the cron fires and CLV data is permanently lost for those races.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The existing stack (Python 3.11, Flask, SQLite WAL, XGBoost/sklearn, pandas, procyclingstats, requests, cloudscraper) handles all existing needs. Only two items change for this milestone.
+The existing stack (Python 3.11, Flask, SQLite WAL, XGBoost 3.2.0, scikit-learn 1.8.0, pandas, pyarrow, scipy, rapidfuzz) covers all v2.0 needs except scheduling and notifications. Only two packages need to be added to requirements.txt. All statistical analysis (Wilson CI, binomtest, pearsonr, calibration checks) is covered by the already-installed scipy 1.17.1 -- statsmodels should not be added. XGBRanker is already included in the installed xgboost 3.2.0. Jinja2 is available as a Flask dependency. The no-new-infrastructure constraint (no Redis, no Celery, no external message broker) is fully achievable.
 
-**New or changed dependencies:**
-- `rapidfuzz>=3.14.3` (NEW, production) — fuzzy name matching; C++ backed, no GPL issues, `token_sort_ratio` scorer is order-invariant and handles Pinnacle's SURNAME-FIRST format after lowercasing. Pin avoids yanked 3.14.4 release; 3.14.5 is the current stable.
-- `procyclingstats>=0.2.8` (UPGRADE from `>=0.2.0`) — Stage class provides all fields needed by `build_feature_vector_manual`. 0.2.8 has HTML parser fixes that reduce silent parse failures.
-- `playwright>=1.58.0` (DEV ONLY, not in `requirements.txt`) — one-time browser inspection to discover Pinnacle's internal API endpoint. After discovery it is not used again.
-- `requests` (EXISTING) — sufficient for the Pinnacle HTTP client; no new dep needed.
-- `unicodedata` stdlib (EXISTING) — handles NFC/NFKD normalization and diacritic stripping before fuzzy matching; no new dep needed.
-- `json` stdlib (EXISTING) — handles `name_mappings.json` cache and `odds_log.jsonl` audit log; no new dep needed.
-
-**Key constraint confirmed:** Pinnacle's official public API has been closed since July 23, 2025. The plan to call their internal web-frontend API via session cookie is viable but LOW confidence until a live browser session confirms the endpoint structure.
+**Core technologies:**
+- APScheduler 3.x (>=3.10.0,<4.0): In-process background scheduling -- chosen over OS cron because jobs share the SQLite WAL connection pool and loaded model state; <4.0 pin prevents silent API break from the 4.x async rewrite
+- discord-webhook 1.x (>=1.3.0): Edge alerts and drift notifications -- adds embed formatting and retry logic over raw requests; fire-and-forget, never raises on failure
+- scipy 1.17.1 (already installed): All CLV significance testing -- Wilson CI, binomtest, pearsonr, chi2_contingency; no statsmodels needed
+- XGBRanker (already in xgboost 3.2.0): Phase 2 pairwise ranking experiment, no additional install
+- Jinja2 (already via Flask): Pre-race report markdown generation, standalone (no Flask app context required)
 
 ### Expected Features
 
-The five feature groups have a hard linear dependency for testing (though Groups 2 and 3 can be developed in parallel):
+**Must have (table stakes) -- Phase 1:**
+- Closing-odds snapshot capture per pending bet, timed to race start -- without this, CLV cannot be computed retroactively
+- Schema migration: add closing_odds_a, closing_odds_b, closing_captured_at, clv, clv_no_vig columns to bets table in cache.db (idempotent ALTER TABLE, same pattern as v1.0 race metadata migration)
+- Post-race auto-settlement with CLV computation written at settlement time
+- CLV display in P&L tracker: per-bet CLV, rolling average, 95% bootstrap confidence interval alongside every point estimate
+- Edge-bucket ROI analysis (0-5%, 5-8%, 8-12%, 12%+) with sample count and Wilson CI per bucket; suppress ROI display when N < 30
 
-**Must have (table stakes) — MVP cannot ship without these:**
-- Pinnacle API client fetches cycling H2H markets, handles expired cookie with clear env-var-specific error, appends raw response to `data/odds_log.jsonl` (ODDS-01, ODDS-02, ODDS-03)
-- Name resolver: exact DB match → unicode normalization → rapidfuzz fuzzy → persistent JSON cache; unresolved riders shown with manual search (NAME-01 through NAME-05)
-- Stage context fetch via `procyclingstats` lib; graceful degradation on failure keeps manual fields available (STGE-01, STGE-02)
-- `POST /api/pinnacle/load` endpoint wiring all three above; returns structured JSON with resolved/unresolved pairs separate (ODDS-01 integration)
-- "Load from Pinnacle" button, race selector dropdown, auto-populated batch pairs; all fields remain individually editable (UI-01, UI-02, UI-03)
+**Must have (table stakes) -- Phase 2:**
+- Fix diff_field_rank_quality = 0.0 hardcode in build_feature_vector_manual -- this is the #3 most important feature by XGBoost gain; live predictions are degraded on every single bet today
+- Refactor interaction feature computation into a shared _compute_interactions() helper -- prerequisite before any other pipeline changes; currently 4 interaction groups including the #2 feature are missing from the manual path
 
-**Should have (second pass within the milestone, low risk if deferred):**
-- `POST /api/pinnacle/refresh-odds` — re-fetches odds only without stage re-fetch (ODDS-04, UI-04). Workable substitute is a full re-load; cycling odds don't move much intraday.
-- ODDS-02 audit log — good hygiene; add once load endpoint is confirmed working.
-- "Loaded X minutes ago" freshness indicator — trivial, high UX value.
-- Per-cell flash on odds refresh — makes changed values visible.
+**Must have (table stakes) -- Phase 3:**
+- Pre-race briefing report with act/flag/watch tiers generated T-2h before stage start, saved to data/reports/
+- Rolling CLV drift alert (50-bet window CLV < 0 triggers Discord notification)
+- Automated closing-odds cron with multi-snapshot polling (T-24h, T-2h, T-30min), UTC-resolved from race country timezone
 
-**Defer to v2+:**
-- INTEL-01 through INTEL-04 (Daily Intelligence Pipeline) — Claude API qualitative research and email reports.
-- BETLOG-01 — inline bet logging from prediction results.
-- Startlist quality feature support in `build_feature_vector_manual` — the function currently zero-fills `diff_field_rank_quality`; adding startlist parameter is a separate improvement tracked in CONCERNS.md.
+**Should have (differentiators -- add after Phase 1 CLV is positive):**
+- Vig-free CLV computation (strip Pinnacle margin before comparison -- cleaner edge signal)
+- DNF probability heuristic adjustment to H2H predictions (career DNF rate + stage danger proxy)
+- Live startlist team strength features (team career top10 rate, team size, captain indicator)
+- Market implied probability as inference-time feature (not training feature -- leakage risk if added to historical training data)
+- PSI monitoring on prediction score distribution (Kolmogorov-Smirnov test, scipy.stats)
+- XGBRanker as alternative training objective (pairwise LambdaRank -- benchmark vs current 69.7%)
+
+**Defer (v2+, after sufficient live data):**
+- Stage-type specialization (three separate models: flat / mountain / TT) -- highest-leverage model upgrade but 3x training cost; gate on CLV being confirmed positive and terrain-specific CLV breakdown showing concentration
+- Market odds as training feature -- requires 500+ live bets with consistent pre-race odds snapshots at a fixed time horizon before training
+- Auto-triggered retraining pipeline -- alert and recommend only; human must approve any retraining
+- Monte Carlo P&L simulation -- circular (synthetic odds from model probs); deprecated as evidence of edge
 
 ### Architecture Approach
 
-The new components form a thin preprocessing pipeline that sits entirely in front of the existing inference path. The integration is additive: two new files in `data/`, two new files in a new `intelligence/` package, and two new routes appended to `webapp/app.py`. The existing ML inference chain (`models/predict.py` → `features/pipeline.py`) is untouched. The `race_params` dict that `build_feature_vector_manual` already accepts is the exact contract the stage context fetcher produces, making integration clean and well-defined.
+v2.0 is entirely additive to the existing pipeline. The ML inference path (models/predict.py, features/pipeline.py) is not structurally changed -- new features are threaded through the existing function signatures. The architecture has two clean integration seams: data/pnl.py (bets table, settlement logic) for CLV infrastructure, and data/odds.py (existing Pinnacle client, zero changes) for closing-odds capture. APScheduler 3.x BackgroundScheduler runs inside the Flask process with a memory job store -- no SQLAlchemy dependency, jobs re-registered from code on each startup. New intelligence modules are isolated from the ML core. Reports are stored as JSON files in data/reports/, not SQLite.
 
-**Major components and responsibilities:**
-1. `data/odds.py` — Pinnacle API client; session-cookie auth via `PINNACLE_SESSION_COOKIE` env var; returns `list[OddsMarket]`; raises typed `PinnacleAuthError` on session expiry; appends to `data/odds_log.jsonl`
-2. `data/name_resolver.py` — name-to-PCS-URL resolution; exact → normalize → rapidfuzz → `data/name_mappings.json` persistent cache; returns URL or None with per-match confidence score
-3. `intelligence/stage_context.py` — race/stage context fetch via `procyclingstats`; maps Pinnacle race name to PCS URL via `cache.db` fuzzy lookup; returns `StageContext` dataclass or raises `StageContextUnavailable`
-4. `intelligence/models.py` — shared dataclasses (`OddsMarket`, `StageContext`, `ResolvedMarket`, `ResolvedPair`); no logic, pure data shapes
-5. `webapp/app.py` (modified) — two new routes (`/api/pinnacle/load`, `/api/pinnacle/refresh-odds`) after line 315; both wrapped with existing `_require_localhost` decorator
-6. `webapp/templates/index.html` (modified) — "Load from Pinnacle" button, race selector, "Refresh Odds" button; JS state management with `data-source` attributes to protect manually-edited cells from refresh overwrites
-
-**Data stores (new, both gitignored):**
-- `data/name_mappings.json` — flat `{"Pinnacle Name": "rider/pcs-url"}` dict, owned by `name_resolver.py`
-- `data/odds_log.jsonl` — append-only audit log, one JSON line per Pinnacle fetch, owned by `odds.py`
+**Major components:**
+1. data/clv.py (new) -- CLV computation, closing-odds capture via existing data/odds.py, get_clv_summary() for UI
+2. webapp/scheduler.py (new) -- APScheduler init, four registered jobs: settlement (hourly), pre-race briefing (06:00 UTC daily), drift monitor (Sunday 08:00 UTC), closing-odds capture (DateTrigger per placed bet)
+3. intelligence/reports.py (new) -- Pre-race report generation: fetch markets, resolve names, fetch stage context, run predictions, format markdown
+4. intelligence/alerts.py (new) -- Discord webhook dispatch, fire-and-forget, never raises
+5. intelligence/drift.py (new) -- Rolling CLV check + calibration bin check; calls alerts on threshold breach
+6. features/dnf_features.py (new) -- DNF probability from historical results table, diff feature for pipeline
+7. data/pnl.py (modified) -- Schema migration for CLV columns, CLV write in settle_bet()
+8. features/pipeline.py (modified) -- Refactor 3-location interaction debt, add market odds / DNF / startlist features in all three locations
 
 ### Critical Pitfalls
 
-1. **Pinnacle 200-with-HTML on session expiry** — The internal API returns HTTP 200 with an HTML login page (not 401/403) when the session cookie expires. Check `Content-Type: application/json` before JSON decode; on failure, inspect first 200 bytes and raise `PinnacleAuthError` with env var name. Never test session validity by status code alone.
+1. **Market odds as training feature introduces look-ahead leakage** -- historical training pairs have no systematic Pinnacle odds history. Prevention: use market odds only at inference time; do not add to historical training until 500+ live bets with consistent T-2h snapshots. Detection: if historical accuracy improves >3% with market odds but forward accuracy does not, leakage is the cause.
 
-2. **Pinnacle endpoint is completely unknown until browser discovery** — Do not write the client against guessed interfaces. Use Playwright to inspect `*.pinnacle.com/api` network traffic during a live cycling H2H browse session. Document the discovered URL, headers, sport ID, and a full example response in `docs/pinnacle-api-notes.md` before writing any production client code. Also confirm that cycling H2H "specials" markets actually exist under Pinnacle's taxonomy — if they don't, the feature is unviable.
+2. **build_feature_vector_manual silently missing 4 interaction groups** -- interact_diff_quality_x_form (XGBoost gain #2) and three other groups are absent from the manual prediction path, defaulting to 0.0. This degrades every live bet made today. Prevention: refactor all three computation sites into _compute_interactions() as the first Phase 2 task; add regression test asserting both paths produce identical interaction values for the same inputs.
 
-3. **Pinnacle name format is SURNAME-FIRST, ALL-CAPS** — "VAN AERT Wout" vs PCS "Wout van Aert". This is systematic across every rider in every market. Apply `.lower()` and `token_sort_ratio` (order-invariant) before fuzzy matching. Set auto-accept threshold at 90 (not 85) to favour manual fallback over wrong auto-accept.
+3. **Closing odds captured too early or after market suspension** -- Pinnacle H2H cycling markets sometimes close 30-60 min before the nominal race start. Race start times from PCS are local-time strings with no timezone annotation; a VPS running UTC will compute capture time incorrectly for European races (CEST = UTC+2). Prevention: multi-snapshot polling at T-24h, T-2h, T-30min; resolve timezone from PCS race country metadata using zoneinfo stdlib; distinguish market-closed from network-error in capture logs.
 
-4. **Unicode normalization form mismatch (NFC vs NFD)** — RapidFuzz 3.0+ removed default preprocessing. Apply `unicodedata.normalize("NFKD", name)` + Mn-category filter on both Pinnacle names and PCS names before any comparison. Test with: Roglič, Bardet, van Aert, Quintana, Bernal, Kragh Andersen.
+4. **CLV false precision on small samples** -- with 26 current bets, the 95% CI on mean CLV is plus or minus 2-3 percentage points. Reporting CLV = 1.87% implies precision that does not exist. Prevention: always display 95% bootstrap CI alongside every CLV point estimate; implement kill gate as lower bound of 95% CI < 0 at N >= 200; add data maturity indicator (Insufficient / Preliminary / Indicative / Reliable) to P&L dashboard.
 
-5. **Wrong fuzzy match silently cached forever** — `name_mappings.json` has no expiry and no schema validation on load. Validate each entry on load (key: non-empty string; value: matches `rider/[a-z0-9-]+`). Use a `threading.Lock()` for concurrent writes. Surface a "wrong?" correction link in the UI for resolved names.
-
-6. **Stage URL construction fetches wrong stage silently** — `procyclingstats` requires a specific PCS URL (e.g., `race/tour-de-romandie/2026/stage-4`). A wrong URL either 404s or, worse, fetches the correct race but wrong stage year — producing subtly wrong features with no error. Cross-check fetched stage date against today's date; treat as a miss if off by more than 1 day and fall back to manual input.
-
-7. **`diff_field_rank_quality` always 0.0 via preload path** — `build_feature_vector_manual` currently accepts no startlist parameter; the #3 most important feature group defaults to neutral. The preload path has startlist data available (all resolved rider URLs from the market). Explicitly decide in Phase 4 whether to add startlist support or document the silent accuracy gap. Do not ship without acknowledging this.
-
----
+5. **Correlated bets on the same stage violate Kelly independence** -- multiple H2H matchups from the same stage are correlated; betting quarter-Kelly on four matchups per stage is effectively full-Kelly on the stage outcome. Prevention: add a per-stage exposure cap (max 2x per-bet cap across all matchups for the same stage_url); display aggregate stage exposure in batch prediction UI.
 
 ## Implications for Roadmap
 
-Based on the dependency chain confirmed in both FEATURES.md and ARCHITECTURE.md, the natural phase structure is sequential (five phases, each depending on the prior), with Phases 2 and 3 parallelizable in practice:
+Based on research, suggested phase structure:
 
-### Phase 1: Pinnacle Endpoint Discovery and API Client
-**Rationale:** The Pinnacle endpoint URL, required headers, sport ID, and response schema are completely unknown. No downstream code can be finalized without this. This is the only TRUE blocker in the milestone and must go first. The endpoint discovery step (Playwright browser inspection) is itself a non-trivial task that should be timebox-scoped.
-**Delivers:** A working `data/odds.py` client that returns structured `OddsMarket` data from a live Pinnacle session, plus `intelligence/models.py` dataclasses, plus a documented endpoint reference in `docs/pinnacle-api-notes.md`.
-**Addresses:** ODDS-01, ODDS-02, ODDS-03
-**Avoids:** Pitfalls 1 and 2 (200-with-HTML auth failure; endpoint unknown until discovery)
-**Research flag:** Needs discovery work before any implementation. Confirm cycling H2H markets exist under Pinnacle's taxonomy before committing to the design.
+### Phase 1: Validate Edge (CLV Infrastructure)
 
-### Phase 2: Name Resolver
-**Rationale:** Can be built and unit-tested independently using mocked Pinnacle name strings; does not need Phase 1 complete. However, integration testing (testing against real Pinnacle name formats) benefits from Phase 1 being done first. Parallel development with Phase 3 is viable.
-**Delivers:** `data/name_resolver.py` with full exact → normalize → fuzzy → cache pipeline; `data/name_mappings.json` creation/save/validate logic; pre-seeded mappings for top-50 WT riders.
-**Addresses:** NAME-01 through NAME-05
-**Avoids:** Pitfalls 3, 4, 5 (wrong auto-accept; NFC/NFD mismatch; surname-first format)
-**Research flag:** Standard string-matching pattern; no additional research needed. Threshold calibration (90 vs other values) should be validated empirically against a sample of real Pinnacle names from Phase 1.
+**Rationale:** With 26 live bets, no closing odds stored, and simulate_pnl.py as the only backtest (which uses synthetic odds derived from model probabilities -- circular by construction), there is no current evidence of real edge against Pinnacle. All Phase 2 model work is predicated on this evidence existing. Build measurement first. The Phase 1 gate is: CLV >= +1.5% (lower CI bound) over 100+ bets to proceed; CLV < 0% over 200 bets to kill.
 
-### Phase 3: Stage Context Fetcher
-**Rationale:** Fully independent of Phases 1 and 2 at the code level. Can be developed in parallel with Phase 2. The key spike is confirming that `procyclingstats` can fetch upcoming-race stage data (the lib is proven for historical stages; upcoming stage URL format needs verification in development).
-**Delivers:** `intelligence/stage_context.py` with Pinnacle race name → PCS URL mapping (cache.db fuzzy lookup primary, hardcoded dict fallback) → `procyclingstats.Stage` fetch → `StageContext` dataclass; graceful degradation when PCS is unavailable.
-**Addresses:** STGE-01, STGE-02
-**Avoids:** Pitfall 6 (wrong stage fetched silently); Pitfall 7 (Flask thread blocking — set 3–5 second total timeout)
-**Research flag:** One spike needed: confirm `procyclingstats` Stage class works with upcoming (not yet completed) race URLs. If it does not, the fallback is cache.db historical stage data for races already in the DB.
+**Delivers:** Closing-odds capture mechanism (manual first, automated in Phase 3), CLV computation and storage, edge-bucket ROI analysis in P&L UI, per-stage exposure warnings, DNF void settlement policy, simulate_pnl.py clearly labeled as non-evidence. A fully instrumented betting operation where every bet generates a CLV signal.
 
-### Phase 4: Flask Endpoint Wiring
-**Rationale:** Integration phase. Requires Phases 1–3 complete. Primarily orchestration code — call the client, resolver, stage fetcher, assemble `ResolvedMarket` response. The most important design decision here is agreeing on the final JSON response schema before the frontend is built, since the frontend has no flexibility once the schema is committed.
-**Delivers:** `POST /api/pinnacle/load` and `POST /api/pinnacle/refresh-odds` routes in `webapp/app.py`; verified curl/httpie test against real Pinnacle data; explicit decision on startlist parameter for `build_feature_vector_manual` (add or document as gap).
-**Addresses:** ODDS-04 (refresh endpoint); full integration of ODDS-01 through STGE-02
-**Avoids:** Pitfall 7 (thread blocking — use `threaded=True`, separate rate limiter instance from scraper); Pitfall 8 (env var absent on startup — read at request time, not import time); Pitfall 10 (startlist neutral defaults — acknowledge or fix)
-**Research flag:** Standard Flask orchestration; no additional research needed.
+**Features addressed:** CLV tracking (all table stakes), edge-bucket ROI analysis (all table stakes), negative Kelly floor fix, correlated-bet stage cap, bet recommendation log (survivorship bias prevention)
 
-### Phase 5: Frontend Integration
-**Rationale:** Final layer. Requires Phase 4 endpoints returning the correct shape. The JavaScript state management (tracking auto-populated vs user-edited cells so "Refresh Odds" does not overwrite manual changes) is the most complex part. The existing `index.html` is a single ~1200-line file — identify natural extraction points before adding significant new JS.
-**Delivers:** "Load from Pinnacle" button, race selector dropdown, auto-populated batch pairs with resolved/unresolved handling, "Refresh Odds" button with odds-only update behavior; all fields individually editable; cookie error banner inline.
-**Addresses:** UI-01 through UI-04
-**Avoids:** Pitfall 13 (duplicate races in selector — normalize race names before deduplication); Pitfall 3 (wrong rider shown — surface "wrong?" correction link for resolved names)
-**Research flag:** Standard Flask/JS pattern. The `data-source` attribute approach for protecting user-edited cells is a minor pattern decision that should be settled before writing the JS.
+**Pitfalls avoided:** CLV false precision (CI always displayed), simulate_pnl circular evidence (deprecated as evidence source), DNF mis-settlement (void policy), stage over-exposure
+
+**Research flag:** Standard patterns -- CLV computation is well-documented methodology; schema migration follows the existing data/pnl.py pattern directly; no research phase needed
+
+### Phase 2: Model Upgrade (Conditional on Phase 1 Gate)
+
+**Rationale:** Phase 2 only begins if Phase 1 CLV gate is passed. The build order within Phase 2 is dictated by a technical dependency: the 3-location interaction feature duplication must be resolved before any new features are added to the pipeline. After the refactor, startlist resolution fixes the highest-impact known serving bug. Market odds and DNF adjustment follow as independent additions.
+
+**Delivers:** A corrected live prediction pipeline (interaction features no longer missing from manual path, diff_field_rank_quality no longer hardcoded 0.0), DNF heuristic adjustment integrated, market odds available at inference time, retrained model benchmarked on time-based split with calibration validation in the 55-80% betting range.
+
+**Features addressed:** Interaction feature refactor (prerequisite), live startlist resolution, market odds as inference feature, DNF heuristic adjustment, calibration gate on retraining, XGBRanker experiment (if time permits)
+
+**Pitfalls avoided:** Market odds leakage (inference-only, not training), training/serving skew from diff_field_rank_quality, calibration regression (bin-level validation gate)
+
+**Research flag:** Needs deeper planning research -- XGBRanker probability calibration (converting ranking scores to probabilities for Kelly staking) and conditional market odds column handling in the serving feature vector need explicit implementation planning
+
+### Phase 3: Automate (Scheduling, Reports, Drift Monitoring)
+
+**Rationale:** Automation adds value only after the pieces it automates are working correctly and validated. By Phase 3, closing-odds capture logic has been manually validated, settlement and CLV computation are confirmed correct, and predictions are running through the fixed pipeline. Automating broken components creates silent failures -- the worst outcome for a betting system.
+
+**Delivers:** webapp/scheduler.py with APScheduler 3.x BackgroundScheduler running four scheduled jobs; daily pre-race briefing reports generated T-2h before stage start with act/flag/watch tiers and CLV status line; automated closing-odds capture with multi-snapshot polling; weekly drift monitoring (rolling CLV + calibration check) with Discord alerts; Discord edge alerts on bets with edge > 8%.
+
+**Features addressed:** Pre-race report generation (all table stakes), automated closing-odds cron, drift detection (rolling CLV alert + monthly calibration check), Discord edge alerts
+
+**Stack used:** APScheduler 3.x (webapp/scheduler.py), discord-webhook (intelligence/alerts.py), Jinja2 standalone (intelligence/reports.py), zoneinfo stdlib (timezone resolution)
+
+**Pitfalls avoided:** Cron venv activation (APScheduler in-process, not OS crontab); race timezone errors (zoneinfo lookup from PCS country metadata); pre-race report on stale data (scrape_log freshness check before generating); closing odds after suspension (multi-snapshot polling)
+
+**Research flag:** Timezone resolution from PCS country metadata to IANA zone names needs a lookup table -- confirm PCS race country codes are consistent enough to build against during Phase 3 task breakdown
 
 ### Phase Ordering Rationale
 
-- Phase 1 must be first because the endpoint is unknown and all integration testing depends on real data shapes.
-- Phases 2 and 3 are ordered after Phase 1 for integration testing confidence, but their core logic can be developed in parallel using mocked Pinnacle data from day one.
-- Phase 4 cannot start until Phases 1–3 are individually verified; it is purely integration work.
-- Phase 5 cannot start until Phase 4 endpoints return the correct shape; the frontend has no way to develop against a contract that doesn't exist yet (unless an explicit mock endpoint is built in Phase 4).
-- The MVP can drop `POST /api/pinnacle/refresh-odds` (ODDS-04, UI-04) to ship sooner — a full reload is an acceptable substitute.
+- **Measurement before optimization:** The CLV kill/keep gate is the only honest arbiter of model value. Starting Phase 2 model work before Phase 1 CLV evidence exists wastes engineering effort on a system that may have no edge.
+- **Fix before extend:** The interaction feature duplication and diff_field_rank_quality bug are existing defects affecting live bets today. They must be resolved before new features are layered on.
+- **Validate before automate:** Phase 3 automation is only reliable after those functions have been manually validated in Phases 1 and 2. Silent automation failures on a betting system have direct financial consequences.
+- **Dependency chain respected:** CLV data is required by drift detection (Phase 3); settled CLV is required for edge-bucket analysis (Phase 1); interaction refactor is required before any Phase 2 feature additions; startlist resolution is required before team features.
 
 ### Research Flags
 
-**Needs deeper work during planning/execution:**
-- **Phase 1 (Pinnacle Discovery):** The endpoint structure is completely unknown. Allocate explicit timebox for Playwright discovery work. If the endpoint is obfuscated (e.g., requires non-reproducible tokens, uses WebSockets instead of REST, or cycling H2H markets do not exist), the entire feature approach needs to pivot. Confirm viability before writing any client code.
-- **Phase 3 (Stage Context) spike:** Confirm `procyclingstats` Stage class works for upcoming races whose results pages don't yet exist on PCS. If not, the fallback path (cache.db lookup for races already scraped) becomes the primary path.
+Phases needing deeper research during planning:
+- **Phase 2:** XGBRanker probability calibration -- converting ranking scores to calibrated probabilities for Kelly staking (Platt scaling vs isotonic regression, score distribution shape from LambdaRank)
+- **Phase 2:** Conditional market odds column handling -- when adding mkt_implied_prob at inference only, confirm the serving feature vector still aligns with feature_names.json from the trained model
+- **Phase 3:** PCS country code to IANA timezone mapping -- confirm PCS country metadata is consistently structured enough to build a static lookup
 
-**Standard patterns (no additional research needed):**
-- **Phase 2 (Name Resolver):** Fuzzy string matching with rapidfuzz is a well-documented, tested pattern. The implementation is straightforward once the Pinnacle name format is confirmed from Phase 1.
-- **Phase 4 (Flask Wiring):** Adding routes with an existing decorator pattern to an existing Flask app is standard. The `_require_localhost` decorator, response shape design, and error handling patterns are all well-understood.
-- **Phase 5 (Frontend):** The existing UI already does dynamic pair rows, autocomplete, and stage field population. Extending this pattern rather than rewriting is the right approach.
-
----
+Phases with standard patterns (no research phase needed):
+- **Phase 1:** CLV computation and SQLite migration -- entirely within existing patterns (data/pnl.py idempotent migration, data/odds.py reuse, scipy Wilson CI). Well-documented methodology.
+- **Phase 3:** APScheduler 3.x Flask integration -- well-documented pattern, confirmed stable API, <4.0 pin prevents regression. Discord webhook integration is straightforward.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | rapidfuzz and procyclingstats verified on PyPI; requests/unicodedata stdlib confirmed sufficient; playwright is dev-only and well-supported |
-| Features | HIGH | Dependency order and table-stakes vs nice-to-have grounded in direct codebase audit (`build_feature_vector_manual` contract confirmed at `features/pipeline.py:225`) |
-| Architecture | HIGH | Based on direct code read of `webapp/app.py`, `features/pipeline.py`, `models/predict.py`; integration points confirmed at line numbers |
-| Pitfalls | HIGH | Grounded in codebase audit (CONCERNS.md, actual function signatures) + confirmed library behaviour (rapidfuzz 3.0 preprocessing removal, SQLite WAL) |
-| Pinnacle API viability | LOW | Official API closed July 2025; internal web API approach is reasonable but unverified without a live session; cycling H2H market availability unconfirmed |
+| Stack | HIGH | All libraries verified via PyPI and local pip inspection; two-package addition confirmed; scipy coverage of all stats needs verified against specific function signatures |
+| Features | HIGH | Feature scope derived from PROJECT.md gates, codebase audit, and industry CLV methodology literature; leakage risk on market odds is structural and well-understood |
+| Architecture | HIGH | Based on direct codebase read of all affected modules (data/pnl.py, features/pipeline.py, data/odds.py, webapp/app.py); integration seams confirmed by existing code patterns |
+| Pitfalls | HIGH | Grounded in confirmed codebase defects (interaction duplication confirmed in CLAUDE.md, diff_field_rank_quality confirmed in CLAUDE.md), established sports betting methodology (CLV, Kelly), and standard operational patterns (cron venv, timezone) |
 
-**Overall confidence:** MEDIUM — all technical components are well-understood; the single LOW-confidence item (Pinnacle endpoint) is the project's make-or-break risk.
+**Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Pinnacle endpoint URL, headers, sport ID, response schema:** Unknown until Phase 1 Playwright discovery. The entire feature is at risk until this is confirmed. Do not build the client against assumptions.
-- **Cycling H2H market availability on Pinnacle:** Pinnacle may offer cycling as outright winner markets only (not H2H specials). Confirm during browser inspection before any other work.
-- **Odds format (decimal vs American):** The internal API may return American odds (`-130 / +110`) rather than European decimal. The existing `kelly_criterion()` expects decimal. Determine format during discovery; write a converter and assert `1.01 <= decimal_odds <= 20.0` before passing to Kelly.
-- **`procyclingstats` upcoming race support:** Confirm the Stage class can fetch data for races whose results page is not yet populated on PCS. If not, the cache.db lookup path becomes primary with `procyclingstats` as a fallback only for races not yet scraped.
-- **`build_feature_vector_manual` startlist parameter:** The #3 most important feature group (`diff_field_rank_quality`) is always neutral via the preload path. Decide explicitly in Phase 4: add startlist parameter to `build_feature_vector_manual` (correct fix), or document as a known accuracy gap and defer to a later milestone.
-- **rapidfuzz threshold calibration:** The 90 auto-accept threshold is a starting point. After Phase 1 produces real Pinnacle name samples, validate the threshold against those names before Phase 2 ships.
-
----
+- **Drift detection thresholds:** The 5% calibration deviation threshold for live bets is a conservative starting guess (vs the 3% seen on the training set). Calibrate against the first 100 settled live bets.
+- **Race start time estimation:** The 10:00 UTC default for European cycling stage starts needs empirical validation. Check whether the stage context fetcher can provide actual start times reliably enough to replace the default assumption.
+- **DNF signal quality:** The historical status column in cache.db::results captures DNF/DNS/OTL, but reliability of DNF records across race types and years has not been audited. Run a coverage query before building the DNF feature.
+- **data/bets.csv vs bets table divergence:** CLAUDE.md references data/bets.csv as the bet log, but data/pnl.py operates on SQLite. Before Phase 3 automation, confirm which is authoritative and whether the CSV is actively maintained or deprecated.
+- **Pinnacle H2H DNF settlement rule:** Whether Pinnacle voids or settles as a win when the non-backed rider DNFs needs to be confirmed against published rules before implementing the void_on_dnf policy.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Codebase: `features/pipeline.py:225` — `build_feature_vector_manual` signature and `race_params` dict contract confirmed by direct read
-- Codebase: `webapp/app.py:34, 226, 315` — `_require_localhost` decorator, `api_predict_batch` contract, insertion point for new routes confirmed by direct read
-- Codebase: `data/scraper.py` — `_rate_limit()` global state and `REQUEST_DELAY=0.5s` confirmed
-- Codebase: `.planning/codebase/CONCERNS.md` — startlist missing from `build_feature_vector_manual`, interaction feature duplication confirmed
-- [rapidfuzz PyPI](https://pypi.org/project/rapidfuzz/) — 3.14.3 stable, 3.14.4 yanked, 3.14.5 current
-- [playwright PyPI](https://pypi.org/project/playwright/) — 1.58.0 stable, Ubuntu 24.04 supported
-- [procyclingstats PyPI](https://pypi.org/project/procyclingstats/) — 0.2.8 current; Stage class fields confirmed from GitHub source
-- [RapidFuzz GitHub](https://github.com/rapidfuzz/RapidFuzz) — preprocessing removed by default in 3.0.0 (breaking change)
-- [Python unicodedata docs](https://docs.python.org/3/library/unicodedata.html) — NFKD normalization + Mn-category filter
+- Local codebase audit: features/pipeline.py, data/pnl.py, data/odds.py, models/predict.py, models/benchmark.py, scripts/simulate_pnl.py
+- CLAUDE.md and PROJECT.md -- confirmed known issues, phase gates, kill/keep thresholds, decision_log.md current best model configuration
+- APScheduler PyPI 3.11.2 (https://pypi.org/project/APScheduler/) -- stable version, <4.0 API guarantee
+- discord-webhook PyPI 1.4.1 (https://pypi.org/project/discord-webhook/) -- embed support confirmed
+- XGBoost 3.0 changelog (https://xgboost.readthedocs.io/en/latest/changes/v3.0.0.html) -- Python sklearn API backward-compatible in 3.x
+- XGBoost Learning to Rank docs (https://xgboost.readthedocs.io/en/stable/tutorials/learning_to_rank.html) -- XGBRanker API confirmed in 3.2.0
+- scipy.stats.binomtest docs (https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binomtest.html) -- CLV significance testing
 
 ### Secondary (MEDIUM confidence)
-- [procyclingstats GitHub](https://github.com/themm1/procyclingstats) — `ExpectedParsingError` ignored by default; Stage class source confirmed
-- [Playwright Python Network docs](https://playwright.dev/python/docs/network) — network interception API for endpoint discovery
-- [SQLite WAL concurrency](https://oldmoe.blog/2024/07/08/the-write-stuff-concurrent-write-transactions-in-sqlite/) — `SQLITE_BUSY` / busy_timeout behavior confirmed
+- OddsJam CLV guide (https://oddsjam.com/betting-education/closing-line-value) -- CLV methodology, +1-2% benchmark for sharp markets
+- Sports Insights statistical significance (https://www.sportsinsights.com/sports-investing-statistical-significance/) -- 200+ bet sample size for CLV precision at 95% CI
+- NannyML PSI guide (https://www.nannyml.com/blog/population-stability-index-psi) -- PSI thresholds (0.1/0.2) from credit scoring literature applied to prediction monitoring
+- ML in sports betting arXiv 2410.21484 (https://arxiv.org/html/2410.21484v1) -- calibration finding supporting CalibratedXGBoost choice
 
 ### Tertiary (LOW confidence)
-- [Arbusers thread](https://arbusers.com/access-to-pinnacle-api-closed-since-july-23rd-2025-t10682/) — Pinnacle official API closed July 23, 2025; page returned 403 during research but finding confirmed by multiple corroborating sources
-- Internal Pinnacle web API viability — reasonable inference from standard browser-session cookie pattern; unverified without live access
+- Race start time estimation (10:00 UTC default for European cycling) -- reasonable approximation; needs empirical validation
+- Drift detection calibration threshold (5% for live vs 3% for training) -- conservative starting guess; calibrate against first 100 live settled bets
 
 ---
-
-*Research completed: 2026-04-11*
+*Research completed: 2026-04-18*
 *Ready for roadmap: yes*

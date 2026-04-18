@@ -1,8 +1,8 @@
-# Domain Pitfalls: PaceIQ v1.0 Pinnacle Preload
+# Domain Pitfalls: PaceIQ v2.0 Edge Validation & System Maturity
 
-**Domain:** Reverse-engineered internal API integration + fuzzy name resolution + scraper-based stage context wired into an existing Flask/ML pipeline
-**Researched:** 2026-04-11
-**Overall confidence:** HIGH (pitfalls grounded in actual codebase + confirmed library behaviour)
+**Domain:** CLV tracking, model upgrades, and automation added to an existing cycling H2H betting intelligence system
+**Researched:** 2026-04-18
+**Overall confidence:** HIGH (pitfalls grounded in actual codebase, confirmed tech debt, and established sports betting methodology)
 
 ---
 
@@ -10,263 +10,334 @@
 
 | Risk | Likelihood | Impact | Phase |
 |------|-----------|--------|-------|
-| Pinnacle internal endpoint structure is unknown until discovery | HIGH | CRITICAL | API Discovery |
-| Session cookie expiry not caught; returns 200 with HTML login page | HIGH | HIGH | API Discovery |
-| Pinnacle API closed to public since July 2025; internal endpoint also undocumented | HIGH | HIGH | API Discovery |
-| Name resolver auto-accepts wrong fuzzy match above threshold | HIGH | HIGH | Name Resolution |
-| Unicode normalization form mismatch (NFC vs NFD) before fuzzy matching | HIGH | MEDIUM | Name Resolution |
-| `name_mappings.json` cache persists a wrong mapping indefinitely | MEDIUM | HIGH | Name Resolution |
-| Pinnacle name order: "Van Aert Wout" vs PCS "Wout van Aert"; surnames first | HIGH | HIGH | Name Resolution |
-| Stage URL construction from display name fails on multi-stage race name variants | HIGH | HIGH | Stage Context |
-| `procyclingstats` lib raises `ExpectedParsingError` silently by default | MEDIUM | MEDIUM | Stage Context |
-| Stage context fetch blocks Flask request thread for up to 3s per PCS call | MEDIUM | HIGH | Stage Context |
-| `build_feature_vector_manual` startlist features always neutral (no startlist passed from preload) | HIGH | MEDIUM | Prediction Integration |
-| Feature vector column mismatch: preload path uses `predict_manual`, not `predict` | MEDIUM | HIGH | Prediction Integration |
-| `fv.get(name, 0.0)` silently fills missing columns with zero; no mismatch warning | HIGH | MEDIUM | Prediction Integration |
-| SQLite `SQLITE_BUSY` during concurrent Pinnacle load + active web request | LOW | MEDIUM | Flask Integration |
-| Odds log `data/odds_log.jsonl` not flushed before process death on exception | MEDIUM | MEDIUM | Odds Ingestion |
-| `PINNACLE_SESSION_COOKIE` env var not present on startup; Flask crashes or silently skips | MEDIUM | HIGH | Flask Integration |
-| Pinnacle H2H market IDs are numeric; cycling sport ID is undocumented | HIGH | HIGH | API Discovery |
+| CLV captured too early — odds still moving | HIGH | HIGH | 1 (Validate Edge) |
+| Closing odds not snapshotted at precise race start | HIGH | HIGH | 1 / 3 (Automate) |
+| False precision: CLV reported to 3 decimal places on 26 bets | HIGH | MEDIUM | 1 (Validate Edge) |
+| Edge-bucket ROI with N<30 per bucket looks definitive | HIGH | HIGH | 1 (Validate Edge) |
+| Survivorship bias from only logging bets that felt good | HIGH | HIGH | 1 (Validate Edge) |
+| Market odds as feature introduces look-ahead leakage in training | CRITICAL | CRITICAL | 2 (Model Upgrade) |
+| `build_feature_vector_manual` silently missing 4 interaction groups | HIGH | HIGH | 2 (Model Upgrade) |
+| Calibration regresses silently after model retraining | MEDIUM | HIGH | 2 (Model Upgrade) |
+| Training/serving skew from `diff_field_rank_quality` always 0.0 in live path | HIGH | HIGH | 2 (Model Upgrade) |
+| Race start timezone wrong → closing-odds cron fires late | HIGH | CRITICAL | 3 (Automate) |
+| Cron silently skips on VPS due to venv not activated | HIGH | HIGH | 3 (Automate) |
+| Settlement script marks DNF as loss instead of void | MEDIUM | MEDIUM | 3 (Automate) |
+| Negative Kelly edge passed through, stake computed as positive | MEDIUM | HIGH | 1 (Validate Edge) |
+| Correlated bets (same stage, multiple matchups) violate Kelly independence | HIGH | HIGH | All |
+| Statistical significance: 200 bets is still under-powered for CLV signal | HIGH | HIGH | 1 (Validate Edge) |
+| simulate_pnl.py used as evidence of edge — it uses model-derived synthetic odds | HIGH | CRITICAL | 1 (Validate Edge) |
 
 ---
 
 ## Critical Pitfalls
 
-Mistakes that require rewrites or silently corrupt results.
-
-### Pitfall 1: Pinnacle Session Cookie Returns 200 with Login HTML, Not 401
-
-**What goes wrong:** When a Pinnacle session cookie expires, the internal web-facing API does not return HTTP 401 or 403. It redirects to a login page and returns HTTP 200 with HTML. Code that only checks `response.status_code == 200` will parse the HTML body as if it were a valid JSON odds response — silently returning an empty market list or crashing on JSON decode.
-
-**Why it happens:** Pinnacle's frontend API is not a REST API in the conventional sense. It is the same endpoint the browser calls, and browsers handle session expiry via page redirects, not HTTP error codes.
-
-**Consequences:** The `/api/pinnacle/load` endpoint appears to succeed (returns 200), the UI receives an empty or malformed result, and the user has no indication that their session cookie is stale. ODDS-03 (clear error with env var name) is violated silently.
-
-**Prevention:**
-- After every request, check `Content-Type: application/json` before attempting JSON decode.
-- Explicitly check response body for the presence of expected JSON keys (e.g., `"markets"` or the cycling sport ID key).
-- Wrap JSON decode in a try/except; on failure, inspect first 200 chars of response body and raise a typed `PinnacleAuthError` with the env var name in the message.
-- Do not retry on auth failure — surface immediately.
-
-**Detection:** Log the first 200 bytes of any non-JSON response at WARNING level. In testing, exercise expired-cookie path explicitly.
+Mistakes that silently corrupt CLV, risk financial loss, or require rewrites.
 
 ---
 
-### Pitfall 2: Pinnacle Internal Endpoint Structure Is Unknown Until Browser Discovery
+### Pitfall 1: Market Odds as Feature Introduces Look-Ahead Leakage in Training
 
-**What goes wrong:** Pinnacle's public REST API (`api.pinnacle.com`) has been closed to new users since July 23rd, 2025. The internal web-frontend endpoint used by `www.pinnacle.com` is undocumented, has no published contract, and its URL structure, sport IDs, market IDs, and parameter names must be discovered by inspecting browser network traffic with Playwright or DevTools. If implementation begins before this discovery step, all downstream code is written against a guessed interface that may be completely wrong.
+**What goes wrong:** Adding Pinnacle implied probability as a training feature (Priority 6 in the project plan) is the most dangerous operation in Phase 2. During training, you only have _historical_ odds if you've stored them. If you use any odds that were available at or after race completion, you are leaking future market information into the model. Even pre-race odds from a historical scrape can be leaky if they were recorded during a period when sharp money had already moved the line based on real-world information (rider injury news, team announcements).
 
-**Why it happens:** The PROJECT.md notes "Endpoint needs to be discovered via Playwright browser inspection — this is in scope for v1.0." This is a first-class unknown, not a minor detail. The cycling sport ID, H2H market type identifier, response schema, and required headers are all unknown until the discovery step is complete.
+**Why it happens:** The temptation is to use `implied_prob` already stored in `data/bets` (the `implied_prob` column at bet time). But that's a convenience field from your own bet log — not a systematic historical odds dataset. If you reconstruct historical implied probs from `odds_log.jsonl`, the timestamps may be after lineup news was already public, injecting soft future information.
 
-**Consequences:** If the endpoint structure is assumed (e.g., copied from the now-closed public API docs), every call will fail. If the endpoint uses WebSocket push rather than REST polling, the entire client architecture needs to change. If cycling is not a supported H2H market type, the whole feature is unviable.
+**Consequences:** The model appears to gain 2–4% accuracy from market odds — but that gain is partially or fully spurious leakage. Live performance will regress because the feature is computed from _current_ odds at prediction time, while training saw odds that reflected pre-race information the feature pipeline didn't explicitly include. The calibration will also shift because the model has learned to trust market odds as a prior, but market odds at prediction time include sharp money the model hasn't been trained to replicate.
 
 **Prevention:**
-- Make API discovery the first task in Phase 1. Do not write the client until the actual endpoint, response schema, required headers, and sport/market ID values are confirmed from a live browser session.
-- Document the discovered endpoint URL, required headers, response shape, and at least one full example response in `docs/pinnacle-api-notes.md` before writing any production code.
-- Confirm that cycling H2H (not just moneyline/winner) markets are available — "cycling" may only have outright winner markets, not H2H specials.
+- Only use pre-bet-placement odds as a training feature — snapshot must be taken at a _consistent_ time horizon before race start (e.g., exactly T-2h) for all training rows and live predictions.
+- For historical training rows, you have no systematic historical odds — meaning you cannot add this feature to training data until you have run the odds-snapshot cron for at least one full season and have a consistent dataset.
+- Short-term safe alternative: include market odds _only_ at inference time as a calibration input, not as a model feature. Apply a post-prediction odds-informed Bayesian update rather than baking market odds into XGBoost.
+- Log the Phase 2 decision in `decision_log.md` explicitly: "market odds feature deferred to Phase 2+ pending historical odds corpus."
 
-**Detection:** Playwright script that logs all `api.*.pinnacle.com` or `*.pinnacle.com/api` network requests during a session browsing to a cycling H2H market.
+**Detection:** Train two models: one with and one without the market odds feature. If the with-odds model shows > 3% accuracy gain on historical data but only 0.5% gain on forward bets, leakage is the likely cause.
 
 ---
 
-### Pitfall 3: Fuzzy Match Auto-Accepts Wrong Rider at High Threshold
+### Pitfall 2: Closing Odds Not Captured at the Correct Moment
 
-**What goes wrong:** rapidfuzz `WRatio` or `token_sort_ratio` at a threshold like 85 will confidently match "Mathieu van der Poel" to "Mathieu van der Pol" (a different, hypothetical rider), or match "Tom Pidcock" to "Tom Pickford" above threshold if the PCS name database has a similarly-spelled entry. Once auto-accepted, the wrong PCS URL is cached in `name_mappings.json` and silently used for all future predictions for that matchup.
+**What goes wrong:** CLV = (closing_odds / bet_odds - 1) is only meaningful if `closing_odds` is the true _closing_ line — the odds immediately before the race goes in-running and Pinnacle suspends the market. Capturing odds 60 minutes before race start is not closing odds; it is pre-race odds. Pinnacle's closing line is typically 30–5 minutes before the off, after lineup sheets are confirmed and sharp bettors have moved the line.
 
-**Why it happens:** Fuzzy matching is probabilistic. A threshold that works for most names can fail on pairs that share a long common prefix or are genuinely similar. The persistent cache (`name_mappings.json`) has no expiry and no correction mechanism once written.
+**Why it happens:** The cron trigger for "closing odds capture" is scheduled by race start time. But:
+1. Race start times from PCS are the scheduled start time, not the actual off time — these can diverge by 5–30 minutes.
+2. The Pinnacle market closes asynchronously — it may suspend before the official start, sometimes much earlier for H2H specials.
+3. The guest API returns current offered odds, not a "last traded" price. If the market is already suspended when the cron runs, you get no data.
 
-**Consequences:** Predictions for the mismatched rider use entirely wrong historical features — effectively random noise fed into the model. The Kelly staking will size bets on fabricated probabilities. This is a financial accuracy bug.
+**Consequences:** CLV is computed against stale pre-race odds rather than true closing odds. The metric appears better (or worse) than reality. A model with genuine edge appears to have no CLV because the closing line was sharper than what you captured.
 
 **Prevention:**
-- Set the auto-accept threshold conservatively (90+, not 80). Prefer false negatives (falls back to manual search, NAME-05) over false positives (silently wrong).
-- Log every fuzzy match with the score, the Pinnacle name, and the matched PCS name. Never silently accept — always write to log even when auto-accepting.
-- Allow the user to invalidate a cache entry from the UI (e.g., a small "wrong?" link next to a resolved name). Without this, wrong mappings are permanent.
-- Consider requiring the matched PCS name's nationality to be consistent with the Pinnacle market context (e.g., a French race is likely to have French/Belgian/Spanish riders).
+- Capture odds at multiple time points: T-24h (opening), T-2h (pre-race), T-30min (near-closing). Store all three. Use the latest non-suspended snapshot as "closing."
+- Store a `market_suspended` boolean alongside each odds snapshot. If suspended, the last non-suspended snapshot is closing.
+- For Phase 3 automation, build the closing-odds scraper to poll every 10 minutes in the 2-hour window before race start rather than a single snapshot.
+- Cross-reference with stage context to get actual race start time — use PCS stage data not Pinnacle display string.
 
-**Detection:** Review the match log after the first live run. Flag any match scoring between 85–95 for manual review.
+**Detection:** Query `odds_log.jsonl` for any record where the snapshot timestamp is > 90 minutes before race start. Flag as non-closing.
 
 ---
 
-### Pitfall 4: Unicode Normalization Form Mismatch Before Fuzzy Matching
+### Pitfall 3: `simulate_pnl.py` Used as Evidence of Real Edge
 
-**What goes wrong:** A Pinnacle display name like "Romain Bardet" may be stored as NFC Unicode (single precomposed character `é`) while the PCS database stores it as NFD (base `e` + combining accent `\u0301`). These strings are visually identical but byte-different. Exact match will fail, and rapidfuzz will treat the strings as having edit distance > 0 even though they are semantically the same name.
+**What goes wrong:** `scripts/simulate_pnl.py` generates synthetic bookmaker odds by adding a 5% margin to model probabilities with noise: `simulate_market_odds(model_probs, margin=0.05, noise_std=0.08)`. This means the simulated CLV is circular — the model is betting against odds derived from its own probabilities. Any positive ROI from this simulation is mathematically guaranteed when the model has calibrated probabilities and the simulated margin is lower than your actual edge calculation.
 
-**Why it happens:** From RapidFuzz 3.0.0, strings are no longer preprocessed by default (no lowercasing, no non-alphanumeric stripping, no Unicode normalization). This is a documented breaking change. If the normalization step is missing, accent-folding that appears to work on some names will silently fail on others depending on which Unicode form each source uses.
+**Why it happens:** The script was built as a development tool before real bets existed. Its primary failure mode is being referenced in a progress review as evidence that PaceIQ has a real edge, when in fact it proves nothing about real market behaviour.
 
-**Consequences:** NAME-02 (accent normalization before fuzzy) is implemented but ineffective. Riders like "Alejandro Valverde", "Nairo Quintana", "Primoz Roglic" will fail exact and fuzzy match, falling through to manual search even when correct matches exist.
+**Consequences:** Proceeding to Phase 2 (model upgrade) based on `simulate_pnl.py` results rather than forward CLV is the most likely single cause of wasted Phase 2 effort. The kill/keep gate ("200 live bets with average CLV < 0 → stop") exists precisely because the simulation is not a substitute.
 
 **Prevention:**
-- Apply `unicodedata.normalize("NFC", name)` AND `unicodedata.normalize("NFKD", name)` followed by ASCII-only encode/decode (diacritic stripping) as separate pre-pass before rapidfuzz.
-- Normalize both the Pinnacle name and the PCS name in the same way before any comparison.
-- Test the normalization layer explicitly with a fixture set: "Romain Bardet", "Primož Roglič", "Wout van Aert", "Søren Kragh Andersen", "Egan Bernal".
+- Deprecate or clearly label `simulate_pnl.py` as a development tool only. Add a prominent warning comment at the top of the file: "SYNTHETIC ODDS — NOT A REAL BACKTEST. DO NOT USE AS EDGE EVIDENCE."
+- Replace all references to simulation results in dashboards and reports with live CLV tracking.
+- The Phase 1 gate (CLV >= 1.5% over 100+ bets) must be computed from real Pinnacle closing odds, not simulated odds.
 
-**Detection:** Unit test with names containing `ž`, `č`, `ø`, `ñ`, and `ú` from both NFC and NFD sources.
+**Detection:** Grep for `simulate_pnl` in any analysis or reporting code. Any reference outside the script itself is a red flag.
 
 ---
 
-### Pitfall 5: Pinnacle Name Order is Surname-First, PCS is Given-First
+### Pitfall 4: Training/Serving Skew from `diff_field_rank_quality` Hardcoded to 0.0
 
-**What goes wrong:** Pinnacle displays rider names in `SURNAME Firstname` format (e.g., "VAN AERT Wout", "POGACAR Tadej"). PCS stores them as `Wout van Aert`, `Tadej Pogacar`. Fuzzy matching `VAN AERT Wout` against `Wout van Aert` will score lower than expected because token order differs. `WRatio` or `token_sort_ratio` handles this better than `ratio`, but all-caps surnames further reduce scores.
+**What goes wrong:** During training, `diff_field_rank_quality` is computed from actual startlist data (all riders in that stage from the results table) and ranges roughly -0.8 to +0.8, with importance rank #3. In the live serving path (`build_feature_vector_manual`), this feature is hardcoded to 0.0 — the model receives a value it almost never saw in training for this feature.
 
-**Why it happens:** Pinnacle follows a common betting display convention (surname-first, surname in caps). PCS uses natural Western name order. The difference is systematic and affects every single rider in every market.
+**Why it happens:** The hardcoded neutral is a deliberate temporary choice from v1.0, documented as a known issue. But when Phase 2 adds startlist resolution (Priority 4: "fix field_rank_quality=0.5"), there is a risk that the fix is partial — e.g., it resolves the startlist for one rider but not both, or resolves it from Pinnacle data but computes percentile against a different reference population than training used.
 
-**Consequences:** Fuzzy scores for all riders are depressed by 5–15 points compared to what they would be if names were in the same format. This pushes many correct matches below auto-accept threshold, causing unnecessary fallback to manual search (acceptable) or, worse, matching to a different rider whose name happens to score higher in the wrong order.
+**Consequences:** If startlist resolution is implemented incorrectly, the feature goes from "always wrong but consistently wrong" (0.0 bias) to "sometimes right, sometimes wrong in unpredictable ways." A model trained on consistent-wrong is arguably more predictable than one receiving inconsistent features. Inconsistent features cause the model to misfire on exactly the high-confidence predictions where startlist quality matters most (favourite vs weak-field bet).
 
 **Prevention:**
-- Before fuzzy matching, normalize Pinnacle names: lowercase, then try both `{firstname} {surname}` and `{surname} {firstname}` tokenizations. Match against PCS names in both orderings and take the max score.
-- Use `rapidfuzz.fuzz.token_sort_ratio` as the primary scorer, which is order-invariant, not `fuzz.ratio`.
-- Strip all-caps formatting from Pinnacle names before comparison: `name.title()` or explicit `.lower()`.
+- When fixing `diff_field_rank_quality` in Phase 2, the percentile must be computed against the _same reference population_ used during training: all finishers in that stage from the results table. For live predictions, the equivalent is all resolved riders in the Pinnacle market for that race.
+- Add a unit test: given a known startlist, verify that `diff_field_rank_quality` for Tadej Pogacar vs a domestique produces a value close to +0.8 (Pogacar is near the top of most fields).
+- Log the exact field size and field quality values alongside every live prediction so skew is detectable in production.
 
-**Detection:** Test with 10 real Pinnacle cycling names from a live browser session. Measure score before and after normalization.
+**Detection:** Compare the distribution of `diff_field_rank_quality` in training data vs live predictions. If training shows a roughly uniform distribution and live shows all zeros, the fix hasn't landed yet.
+
+---
+
+### Pitfall 5: Kelly Criterion Applied to Correlated Bets on the Same Stage
+
+**What goes wrong:** When you bet multiple H2H matchups from the same stage (e.g., Pogacar vs Vingegaard AND Roglic vs Hindley on the same mountain stage), the outcomes are correlated — a harder-than-expected climb affects all matchups in the same direction. Standard Kelly assumes bet outcomes are independent. Betting quarter Kelly on each of four correlated matchups in the same stage is effectively betting full Kelly on the stage outcome.
+
+**Why it happens:** The Kelly implementation in `models/predict.py` computes `kelly_fraction` per matchup independently. There is no cross-matchup correlation adjustment. The batch prediction UI shows all matchups with independent Kelly sizes. A user following all recommendations from a single "Load from Pinnacle" session may be placing 4–6 bets on the same 4-hour event.
+
+**Consequences:** Effective bankroll exposure on a single stage can be 3–5x the intended per-bet cap. A single stage outcome (mountain finish where all favourites blow up, or a bunch sprint that collapses) correlates all bets in the same direction and produces an amplified loss or gain.
+
+**Prevention:**
+- Add a per-stage exposure cap: total staked across all matchups for the same stage should not exceed 2x the per-bet cap (e.g., max 10% bankroll total for any single stage, regardless of how many matchups are bet).
+- In the batch prediction UI, display aggregate stage exposure alongside individual Kelly sizes. Flag when total stage exposure exceeds 5% of bankroll.
+- In `data/pnl.py`, add a query that returns active stake grouped by `stage_url`. If a new bet's stage already has > threshold active stake, surface a warning before placement.
+
+**Detection:** Query `SELECT stage_url, SUM(stake) FROM bets WHERE status = 'pending' GROUP BY stage_url`. Any stage with total > 2x bet cap is over-exposed.
 
 ---
 
 ## Moderate Pitfalls
 
-### Pitfall 6: Stage URL Construction From Pinnacle Race Name Is Fragile
+---
 
-**What goes wrong:** Pinnacle displays race names like "Tour de Romandie - Stage 4" or "Liege-Bastogne-Liege". These must be converted to PCS stage URLs like `race/tour-de-romandie/2026/stage-4` or `race/liege-bastogne-liege/2026`. The mapping is not obvious: hyphens vs spaces, accent removal, year injection, stage number format (`stage-4` vs `etape-4`), and one-day races having no stage suffix.
+### Pitfall 6: Edge-Bucket ROI Analysis Overfits to Small Samples
 
-**Why it happens:** There is no canonical mapping API. The conversion requires slug generation (lowercase, replace spaces with hyphens, strip accents, remove punctuation), year injection from context (today's date), and stage type detection (one-day vs stage race). Each of these steps can fail independently.
+**What goes wrong:** Grouping bets by edge bucket (5–8%, 8–12%, 12%+) and reporting ROI per bucket sounds like rigorous analysis. With fewer than 30 bets per bucket, the confidence intervals on ROI are so wide that every bucket's ROI is statistically consistent with zero. The natural variance of H2H cycling betting (roughly 50% win rate at even odds) means you need ~100 bets per bucket before bucket ROI estimates converge to within ±5%.
 
-**Consequences:** `procyclingstats` Stage class raises `ValueError` or `ExpectedParsingError` on a bad URL. If the URL is almost-right (e.g., wrong year, wrong stage number), it fetches the wrong stage's data — different distance, profile, and elevation — producing subtly wrong feature vectors with no error raised.
+**Why it happens:** 26 total bets at project start means you have maybe 8–10 bets in the 8–12% bucket and 3–4 in the 12%+ bucket. A few wins or losses in the high-edge bucket swing ROI from -30% to +40% due to sampling noise, not signal.
+
+**Consequences:** The Phase 1 gate ("CLV >= 1.5% over 100+ bets") can be satisfied by CLV even when ROI by bucket is noise-dominated. Reporting bucket ROI as if it shows edge concentration is misleading and may incorrectly validate or invalidate a segment of the edge.
 
 **Prevention:**
-- Build a slug-generation function and test it against a fixture set of 20 known Pinnacle names and their correct PCS URLs before the live integration.
-- After constructing the URL, verify it fetches the correct stage by cross-checking the stage date against today's date. If the dates don't match within ±1 day, treat as a miss and fall back to manual input.
-- The `procyclingstats` Stage class accepts the relative URL (e.g., `race/tour-de-romandie/2026/stage-4`). Never construct the full absolute URL — the lib prepends the domain internally.
+- Always display the 95% confidence interval on ROI alongside the point estimate: `ROI ± 1.96 * sqrt(p*(1-p)/n)` (Wilson interval for win rate).
+- Do not interpret bucket ROI until N >= 30 per bucket. Label buckets with N < 30 as "insufficient data."
+- Prefer CLV as the primary signal for Phase 1 (it requires no outcome results and converges faster than ROI). Use ROI as a secondary, slower-converging confirmation.
+- Separate the "is there any edge?" question (CLV > 0 over 100+ bets) from "where is the edge concentrated?" question (bucket ROI, requires 30+ per bucket).
 
-**Detection:** Log the constructed URL and the fetched stage date on every call. Alert if fetched date differs from expected.
+**Detection:** Before any bucket ROI report, assert `len(bucket) >= 30`. If not, display "N={n}, insufficient for reliable estimate" rather than an ROI number.
 
 ---
 
-### Pitfall 7: `procyclingstats` Stage Fetch Blocks the Flask Request Thread
+### Pitfall 7: Survivorship Bias from Selective Bet Logging
 
-**What goes wrong:** The `procyclingstats` lib makes synchronous HTTP requests to PCS. With the 0.5s rate limiter enforced globally via `_rate_limit()` in `data/scraper.py`, and potentially 3 retries per stage, a single stage context fetch can block the Flask thread for 1.5–4.5 seconds. Flask's default development server is single-threaded. The user clicks "Load from Pinnacle", the browser shows a spinner, and Flask is completely blocked — including any concurrent requests (e.g., the user clicking something else).
+**What goes wrong:** If only bets that were actually placed are logged, but the model surfaced edges on matchups that were skipped (e.g., "I didn't like this one" or "odds were gone when I checked"), then the sample of logged bets is not representative of all model-flagged edges. The logged bets are the ones that felt most confident — introducing survivorship bias into CLV analysis.
 
-**Why it happens:** The `_rate_limit()` global state in `data/scraper.py` is not aware of the new stage-context fetch path. If the user triggers a Pinnacle load while a background scrape is happening, the rate limiter will serialize both, making the load much slower. The Flask dev server runs in a single thread by default.
+**Why it happens:** The bet logging flow requires manual action (the user clicks "Log Bet" in the Flask UI). Bets where the odds disappeared, where the user was uncertain, or where the edge was borderline are not logged — even though the model recommended them. The gap between model recommendations and logged bets is unmeasured.
 
-**Consequences:** Perceived hang of 3–10 seconds on "Load from Pinnacle" click. If `threaded=True` is not set on `app.run()`, all other routes are blocked during the fetch.
+**Consequences:** Average CLV in the log appears higher than the model's true CLV because the worst-case recommendations (where the market was efficient and your edge was an illusion) were never bet. A model with zero true edge can appear to have positive CLV if the user consistently avoids the recommendations where odds have already moved against them.
 
 **Prevention:**
-- Run the Flask app with `threaded=True` (already needed for the SSE streaming admin endpoints). Confirm this is set.
-- Do not share the global `_rate_limit()` state between the scraper and the new stage-context client. Use a separate rate limiter instance for the preload path to avoid contention with background scrapes.
-- Set a tight timeout on the stage context fetch (3–5 seconds total, not per retry). If it times out, return a partial result with manual fields empty and STGE-02 degradation.
-- Consider returning from `/api/pinnacle/load` quickly with the Pinnacle odds and resolving stage context asynchronously — but only if the UI can handle a two-phase load.
+- Log all model predictions where edge > 5%, regardless of whether a bet was placed. Add a `recommendation_status` field: "bet_placed," "passed_no_odds," "passed_discretion," "passed_market_moved."
+- CLV analysis should be run on the full recommendation log, not just placed bets. Compare CLV of placed vs passed recommendations — systematic divergence indicates cherry-picking.
+- If the recommendation log shows that passed bets have lower closing-line implied probability (the market moved further against you on skipped ones), that is evidence of information leakage in your bet selection.
 
-**Detection:** Time the `/api/pinnacle/load` endpoint end-to-end. Flag if > 5 seconds.
+**Detection:** Add a separate table or JSONL log for model recommendations (edge > 5%), distinct from placed bets. Query for divergence between recommended and placed sets.
 
 ---
 
-### Pitfall 8: `build_feature_vector_manual` Receives No Startlist; `diff_field_rank_quality` Is Always 0.0
+### Pitfall 8: Calibration Regresses After Retraining Without Bin-Level Validation
 
-**What goes wrong:** `build_feature_vector_manual` sets `diff_field_rank_quality = 0.0` (neutral) when no startlist is provided. `diff_field_rank_quality` is the #3 most important feature (importance 0.014). The Pinnacle preload path will have the full startlist available from the market data (all riders in the H2H matchups are known). If the code doesn't pass the startlist to `build_feature_vector_manual`, predictions will be systematically less accurate than they need to be — and the feature already has neutral default logic written in, so this will fail silently.
+**What goes wrong:** The current model passes calibration ("all bins within 3%"). Phase 2 retraining (adding new features, changing train/test split, retraining on additional 2025–2026 data) can silently break calibration. The most common pattern: calibration is only checked on the held-out test set, not on the specific probability ranges where bets are actually placed (65–80% probability).
 
-**Why it happens:** `build_feature_vector_manual` currently takes no `startlist` parameter (the CONCERNS.md notes this as a missing piece). The Pinnacle preload integration, which does have startlist data, will naturally call `predict_manual` without adding the startlist — because the function signature doesn't accept it yet. This is a silent accuracy loss.
+**Why it happens:** `sklearn.metrics.brier_score_loss` and ROC-AUC are reported globally. Calibration at the tails (very high or very low predicted probability) can be fine globally but broken specifically in the 60–75% range where Pinnacle H2H markets sit. A model can have good global calibration and bad local calibration in the betting range.
 
-**Consequences:** Startlist-relative features (`diff_field_rank_quality`, `diff_field_rank_form`, `diff_field_strength_ratio`) are always neutral for all preloaded predictions. The model cannot distinguish between a sprinter in a weak field vs a strong field.
+**Consequences:** The Kelly staking math assumes calibrated probabilities. If the model says 72% but true frequency is 63%, Kelly sizes are systematically too large and expected ROI is negative even if there appears to be edge against the market.
 
 **Prevention:**
-- When building the preload integration, explicitly check: does `build_feature_vector_manual` accept a `startlist` parameter? If not, adding startlist support should be scoped into this milestone or explicitly deferred with a note.
-- The Pinnacle market response will contain all rider names for a given race. After name resolution, the set of resolved PCS URLs is the startlist. Pass it to the feature builder.
-- If adding startlist support is deferred, document in the prediction response that field-quality features are using neutral defaults.
+- After every retraining run, run `scripts/eval_calibration.py` and verify calibration at the specific bins that overlap with your betting range: [0.55, 0.60], [0.60, 0.65], [0.65, 0.70], [0.70, 0.75], [0.75, 0.80].
+- Add a calibration gate to the Phase 2 completion criteria: "no bin in the 55–80% range deviates by more than 3 percentage points." Block deployment if calibration fails.
+- Log calibration bin results in `decision_log.md` after every training run.
+- Compare calibration on time-based test split specifically (2025–2026), not only on the stratified split — the stratified split can show better calibration than time-based due to data distribution differences.
 
-**Detection:** Add an assertion or log line in `build_feature_vector_manual` that logs when startlist features are defaulting to neutral. Make the silent default visible.
+**Detection:** Plot reliability diagram (predicted vs actual frequency per 10-bin quantile) for every retrained model. Save the plot to `models/trained/calibration_plot_{date}.png`.
 
 ---
 
-### Pitfall 9: `name_mappings.json` Cache Has No Schema Validation on Load
+### Pitfall 9: CLV False Precision — Reporting 1.87% When You Mean "Probably Positive"
 
-**What goes wrong:** `name_mappings.json` is a persistent JSON file that maps Pinnacle display names to PCS URLs. On every load, the code reads this file. If the file is manually edited, corrupted, or written with a wrong schema (e.g., a PCS URL from a different year's rider profile that is now 404), the code silently uses the wrong mapping. There is also no locking on concurrent writes from multiple Flask threads (if `threaded=True` is set).
+**What goes wrong:** With 26 bets (and realistically 80–100 bets through most of Phase 1), the 95% confidence interval on mean CLV is roughly ±2–3 percentage points. Reporting "average CLV = 1.87%" implies precision that doesn't exist. The true CLV could be anywhere from -0.5% to +4.2% with 95% confidence.
 
-**Why it happens:** JSON files read with `json.load()` have no built-in schema enforcement. File-level write concurrency is not handled in Python without explicit locking.
+**Why it happens:** Mean CLV per bet is trivial to compute (`mean(closing_implied_prob / bet_implied_prob - 1)`). The confidence interval requires bootstrap sampling or a standard error estimate that most dashboard implementations omit.
 
-**Consequences:** A corrupted or out-of-date cache entry produces wrong rider URL → wrong features → wrong probabilities. This is indistinguishable from a correct prediction unless the user notices the wrong rider name in the UI.
+**Consequences:** The Phase 1 kill gate ("CLV < 0 → stop") may be triggered or ignored incorrectly based on a point estimate that is inside the confidence interval of zero. You stop a viable system or continue a non-viable one based on noise.
 
 **Prevention:**
-- On load, validate each entry: key must be a non-empty string, value must match the PCS URL pattern (`rider/[a-z0-9-]+`). Log and skip invalid entries; do not crash.
-- Use `filelock` or a threading lock around writes to prevent concurrent write corruption. A simple `threading.Lock()` is sufficient for single-process Flask.
-- Include a version field in the JSON file. If the schema changes, the old file is ignored and rebuilt from scratch.
+- Compute and display 95% bootstrap confidence interval on mean CLV alongside the point estimate.
+- The kill gate should be: "lower bound of 95% CI on mean CLV < 0 at N >= 200" (not just "mean CLV < 0 at any point").
+- The keep gate should be: "lower bound of 95% CI on mean CLV >= 1.0% at N >= 100."
+- Display a "data maturity" indicator in the P&L dashboard: "Insufficient data (N < 50)," "Preliminary (N 50–100)," "Indicative (N 100–200)," "Reliable (N 200+)."
 
-**Detection:** Add a `_validate_mappings()` call on startup that reports how many entries exist and flags any that don't match the expected pattern.
+**Detection:** Any CLV report that omits a confidence interval or sample size is a red flag. Enforce N display on every CLV number.
 
 ---
 
-### Pitfall 10: Odds Audit Log Not Written Atomically; Partial Writes on Exception
+### Pitfall 10: Race Timezone Errors Cause Cron to Fire After Market Suspension
 
-**What goes wrong:** `data/odds_log.jsonl` is appended to after each successful Pinnacle fetch (ODDS-02). If the Flask endpoint raises an exception after fetching but before writing, or during writing (disk full, permission error), the log entry is missing. If the write is interrupted mid-line, the JSONL file has a corrupt last line that breaks all future JSON parsing of the file.
+**What goes wrong:** PCS race start times are listed in local race time with no explicit timezone metadata. A stage in Spain starts at 12:00 CEST (UTC+2). If the closing-odds cron is scheduled assuming UTC, it fires at 12:00 UTC — two hours after the market has already been suspended. The closing odds record is empty or shows suspended market.
 
-**Why it happens:** `file.write()` on a JSONL entry is not atomic. An exception mid-write leaves a partial JSON object. Standard `open(path, "a")` append mode does not guarantee the write completes before the Python process continues.
+**Why it happens:** The VPS runs on UTC. `scrape_log` and `stages` table dates are stored as `TEXT` without timezone. Race times from PCS HTML are scraped as local-time strings with no TZ annotation. The automation layer must derive UTC time from (local time, race location, calendar date) — all of which require a lookup that doesn't currently exist in the pipeline.
 
-**Consequences:** Audit log is incomplete or unparseable. Any tooling that reads `odds_log.jsonl` for analysis will fail on the corrupt line.
+**Consequences:** The closing-odds cron either never captures real closing odds (fires too late) or fires too early (market still moving, not true closing odds). Both destroy the validity of CLV analysis.
 
 **Prevention:**
-- Write each JSONL entry as a complete line with `\n` in a single `file.write()` call (single syscall is atomic on most filesystems for small payloads).
-- Wrap writes in try/except; log failure to `logging` but do not raise (the odds fetch itself succeeded — don't block the user because the audit log failed).
-- Consider writing to a temp file and atomically renaming — but for append-only audit logs, this is overkill. Single-line writes of < 4KB are atomic on Linux/macOS.
+- Build a timezone resolution layer for Phase 3 automation. Map race country/region to a timezone. PCS includes country data in race metadata — use it with the `pytz` or `zoneinfo` standard library.
+- Store UTC timestamps in `odds_log.jsonl` for every snapshot. Include both the local-time string from PCS and the UTC timestamp.
+- Run the closing-odds poll on a schedule relative to race UTC start time, not local time. Cross-check with a second source (Pinnacle shows suspension status in the API response).
+- Add an integration test: for a past stage with known local start time, verify the computed UTC timestamp is correct.
 
-**Detection:** After every test run, parse `odds_log.jsonl` with `json.loads()` on each line. Fail the test if any line is invalid.
+**Detection:** After each closing-odds capture, log `"captured_at_utc": "...", "stage_start_utc": "..."` and compute time delta. Flag if delta > 30 minutes before start or if market was already suspended.
+
+---
+
+### Pitfall 11: `build_feature_vector_manual` Silently Missing 4 Interaction Groups
+
+**What goes wrong:** This is an existing confirmed bug. `build_feature_vector_manual` computes interactions for climber×profile, climber×vert, tt×itt, and sprint×flat — but is missing the four groups added later to `build_feature_vector`: gc×profile, quality×form, terrain×form, and climber×mountain. These four groups include `interact_diff_quality_x_form` — the #2 most important feature (XGBoost gain 0.038).
+
+**Why it happens:** Interaction features were added to `build_feature_vector` and `build_feature_matrix` without being propagated to `build_feature_vector_manual`. The CLAUDE.md and PROJECT.md document this as known technical debt. The feature uses `fv.get(name, 0.0)` in the serving path, so missing features silently default to zero.
+
+**Consequences:** Every live prediction through the Pinnacle preload path is made with `interact_diff_quality_x_form = 0.0` instead of the actual value. This is not the training distribution — the model was trained seeing this feature with values spanning roughly -0.3 to +0.3. Defaulting to zero for a top-2 importance feature degrades prediction quality on every single live bet.
+
+**Prevention:**
+- This must be fixed in Phase 2 as part of the "startlist fix" ticket. Refactor all three interaction computation sites into a single `_compute_interactions(race_feats, rider_a_feats, rider_b_feats)` helper function. Call it from all three paths.
+- Add a regression test: given the same rider pair and race params, `build_feature_vector` and `build_feature_vector_manual` must produce identical interaction feature values (modulo startlist-relative features which are legitimately different).
+- Until fixed, log a WARNING on every `build_feature_vector_manual` call: "4 interaction groups unavailable in manual path — predictions may be degraded."
+
+**Detection:** `diff(set(build_feature_vector(...).keys()), set(build_feature_vector_manual(...).keys()))` — the difference should be empty except for startlist-relative features. Currently it is not.
+
+---
+
+### Pitfall 12: Auto-Settlement Silently Marks DNF as Loss
+
+**What goes wrong:** `data/pnl.py:auto_settle_from_results()` handles DNF by checking `if rank_a is None: a_ahead = False` (rank_a DNF = rider B wins). But for H2H bets, if the rider you backed DNFs, Pinnacle typically voids the market (no action). The current settlement logic settles a DNF as a loss rather than a void, taking money from the bankroll that should be returned.
+
+**Why it happens:** The implementation predates live betting and was written to resolve ambiguous results from the scraper (DNF riders have null rank). The distinction between "DNF = void bet" (Pinnacle rule) and "DNF = loss" (settlement code assumption) was not reconciled.
+
+**Consequences:** Every DNF on a backed rider creates a false loss in the P&L record. Bankroll decreases incorrectly. CLV computation on that bet is valid (CLV uses closing odds, not outcome), but ROI is understated because a void should return stake, not lose it.
+
+**Prevention:**
+- Add a `dnf_policy` parameter to `auto_settle_from_results()` with a default of `"void_on_dnf"` to match Pinnacle's actual settlement rules for H2H markets.
+- Verify Pinnacle's specific rule for cycling H2H when one rider DNFs: is it void, or does the other rider win? Document this in `docs/pinnacle-settlement-rules.md` before implementing.
+- The `void_bet()` function already exists in `data/pnl.py` — use it when a DNF is detected with `dnf_policy = "void_on_dnf"`.
+
+**Detection:** Query `SELECT * FROM bets WHERE status = 'lost' AND notes LIKE '%DNF%'`. Any such record may be a mis-settlement.
+
+---
+
+### Pitfall 13: Cron Jobs on VPS Fail Silently When Venv Not Activated
+
+**What goes wrong:** All Python scripts require the `.venv` virtualenv to be active. A cron entry that runs `python scripts/settle.py` without activating the venv will use the system Python (3.x, likely without XGBoost, pandas, procyclingstats), raise `ModuleNotFoundError` on the first import, and exit with code 1. Cron logs this as a failure, but there is no alerting — the job simply does not run.
+
+**Why it happens:** crontab entries don't inherit shell environment. The standard fix (`source .venv/bin/activate`) does not work in sh-based crontabs (cron uses `/bin/sh`, not bash). The correct pattern is to call the venv Python directly: `/path/to/.venv/bin/python scripts/settle.py`.
+
+**Consequences:** Auto-settlement, closing-odds capture, and drift detection all fail silently on the VPS. The Flask app still runs (it was started with the venv), but scheduled jobs do not. The user notices only after checking `data/bets` and finding no settlements, by which time several races have passed and CLV data is lost forever (closing odds not captured).
+
+**Prevention:**
+- All cron entries must use the absolute path to the venv Python: `/home/user/ml-cycling-predictor/.venv/bin/python /home/user/ml-cycling-predictor/scripts/settle.py >> /home/user/logs/settle.log 2>&1`
+- Every cron script must write a sentinel log line on start and exit: `[2026-04-18 12:00:01] settle.py started`, `[2026-04-18 12:00:03] settle.py done: 3 bets settled`.
+- Add a data-freshness cron job (listed in the project plan) that alerts if `scrape_log` shows no activity in the past 24 hours. This catches venv failures, network failures, and other silent errors.
+- Test all cron scripts by running them as the cron user: `sudo -u www-data /home/user/.venv/bin/python scripts/settle.py` before deploying the crontab.
+
+**Detection:** Every scheduled script must exit with code 0 on success and non-zero on failure. Add `set -e` at the shell level and wrap Python calls in error-checking. Monitor cron exit codes in the daily health report.
 
 ---
 
 ## Minor Pitfalls
 
-### Pitfall 11: `PINNACLE_SESSION_COOKIE` Env Var Absent at Startup
+---
 
-**What goes wrong:** If the env var is not set, `os.environ["PINNACLE_SESSION_COOKIE"]` raises `KeyError` at the point of use inside the endpoint. If this is called at module import time (e.g., in a module-level constant), Flask fails to start entirely. If called at request time, the first click of "Load from Pinnacle" raises an unhandled exception, returning a 500 with no useful message.
+### Pitfall 14: Negative Kelly Edge Bypasses `should_bet=False` Due to Calibration Rounding
 
-**Prevention:** Read the env var at request time (not import time). Use `os.environ.get("PINNACLE_SESSION_COOKIE")` and return a 503 with the message "Set PINNACLE_SESSION_COOKIE env var" if it is None. Add a startup check that logs a WARNING (not an error — the app should still start) if the var is absent.
+**What goes wrong:** `kelly_criterion()` returns `should_bet=False` when `kelly_f <= 0`. But the edge displayed in the UI is `model_prob - implied_prob`, computed independently of Kelly. If model_prob = 0.5001 and implied_prob = 0.5000 (edge = +0.01%), Kelly also returns a tiny positive stake. The user sees "edge = 1 basis point" and Kelly = 0.01% as a bet recommendation. This is noise, not signal.
+
+**Prevention:** Add a minimum edge threshold check in Kelly: if `edge < 0.02` (2 percentage points), return `should_bet=False` regardless of Kelly sign. This matches the project's stated "flag at >5%, act at >8%" thresholds and prevents micro-edge noise from reaching the bet log.
 
 ---
 
-### Pitfall 12: Pinnacle Odds Decode Vig Differently From the Existing Kelly Calculation
+### Pitfall 15: Stratified Split Accuracy (69.7%) Cited in Live Reporting as Expected Performance
 
-**What goes wrong:** Pinnacle internal odds may be returned as American odds (e.g., `-130 / +110`) or as European decimal odds, depending on what the browser session is configured to show. The existing `kelly_criterion()` in `models/predict.py` expects decimal odds. If the API returns American or fractional odds, the conversion must be applied before passing to Kelly — and forgetting this produces wildly wrong stake sizes (e.g., American `-130` interpreted as decimal `130.0` = impossible 99.2% implied probability).
+**What goes wrong:** The CLAUDE.md and `decision_log.md` document that stratified split overestimates live performance by ~1.3% vs time-based split. The time-based estimate (~68.5% / 0.755 AUC) is closer to real-world expectation. If the pre-race briefing reports or edge-alert system displays "model accuracy: 69.7%", users (and future contributors) will have miscalibrated expectations for live performance.
 
-**Prevention:** Determine the odds format returned by the internal API during the discovery step (Phase 1). Write a single `_to_decimal_odds(raw, format)` converter and test it. Never pass raw API odds directly to `kelly_criterion()`.
-
-**Detection:** Add an assertion: `assert 1.01 <= decimal_odds <= 20.0` before passing to Kelly. Odds outside this range are almost certainly in the wrong format.
+**Prevention:** All user-facing displays, alerts, and reports must show the time-based split accuracy as the headline figure. Label it: "Live estimate: ~68.5% (time-based split)." Reserve the 69.7% figure for internal model comparison only.
 
 ---
 
-### Pitfall 13: Race Selector Shows Duplicate Races When Pinnacle Has Multiple H2H Markets Per Stage
+### Pitfall 16: Pre-Race Report Cron Fetches Stale PCS Data If Scraper Hasn't Run
 
-**What goes wrong:** Pinnacle may offer multiple H2H markets for the same stage (different matchup groups, or both outright H2H and handicap H2H). The race selector UI deduplicates on the Pinnacle race name string. If the name is not exactly identical across market groups (e.g., "Tour de Romandie Stage 4" vs "Tour de Romandie - Stage 4 Handicap"), the selector shows two entries for the same stage, confusing the user.
+**What goes wrong:** The pre-race briefing cron runs T-2h before stage start and calls `build_feature_vector_manual` with the latest rider features from `cache.db`. If `update_races.py` hasn't run recently (e.g., VPS network issue overnight), the rider features reflect form from a week ago — missing a recent DNF, a sprint win that changes form_last10, or a new team leader assignment.
 
-**Prevention:** Deduplicate race selector options by normalizing Pinnacle race names (strip market type suffixes, normalize hyphens/dashes) before building the dropdown. Group all H2H pairs under the canonical race name.
+**Prevention:** The pre-race briefing script must check `scrape_log` for the most recent successful scrape. If the most recent scrape is > 36 hours old, include a warning in the pre-race report: "STALE DATA: rider form last updated {n} hours ago." Do not silently serve predictions on stale data without flagging it.
 
 ---
 
-### Pitfall 14: procyclingstats Stage URL Requires the Year; Year Inference From Race Name Can Be Wrong
+### Pitfall 17: `data/bets.csv` and `data/bets` (SQLite) Diverge If Settlement Path Is Different
 
-**What goes wrong:** PCS stage URLs include the year: `race/tour-de-romandie/2026/stage-4`. The year must be inferred (today's year). If Pinnacle is offering markets on a race that started last year and finishes this year (e.g., a race running Dec 31 → Jan 1), the stage URL with today's year will 404.
+**What goes wrong:** The CLAUDE.md references `data/bets.csv` as the bet log. `data/pnl.py` uses the `bets` table in `cache.db`. These are two different storage mechanisms. If some workflows write to CSV and others write to SQLite, or if the auto-settlement cron only updates SQLite but the user checks the CSV, the two records will diverge.
 
-**Prevention:** Use the current date to determine year. If the stage fetch returns an error, retry with `current_year - 1`. Log the year used.
+**Prevention:** The v2.0 automated settlement path (`auto_settle_from_results`) only operates on SQLite (`data/pnl.py`). Before building Phase 3 automation, confirm that `data/bets.csv` is deprecated (no code paths write to it) or that both are updated atomically. Do not build automation that writes to one without the other.
 
 ---
 
 ## Phase-Specific Warnings
 
-| Phase Topic | Likely Pitfall | Mitigation |
-|-------------|---------------|------------|
-| Pinnacle API discovery | Endpoint unknown; cycling H2H markets may not exist as H2H specials | Confirm market existence and response schema before writing any client code |
-| Pinnacle client implementation | 200-with-HTML on cookie expiry; American vs decimal odds | Check Content-Type + validate odds range; never check only status code |
-| Name resolution | Surname-first format; NFC/NFD mismatch; wrong auto-accept | Normalize format and Unicode form before fuzzy; use token_sort_ratio; threshold >= 90 |
-| Name cache persistence | Wrong mappings cached forever; file corruption | Validate schema on load; use threading lock on write; allow UI correction |
-| Stage context fetch | URL construction failure; fetches wrong stage silently | Verify fetched date matches today's date; degrade gracefully via STGE-02 |
-| Stage context performance | Blocks Flask thread 3–10 seconds | threaded=True; separate rate limiter; per-request timeout |
-| Prediction integration | Startlist features always neutral; feature column silently zero-filled | Check if startlist can be passed; log when defaulting to neutral |
-| Odds ingestion | Partial JSONL writes; missing env var | Single-line atomic writes; read env var at request time with clear error |
+| Phase | Topic | Likely Pitfall | Mitigation |
+|-------|-------|---------------|------------|
+| 1 — Validate Edge | CLV infrastructure | Closing odds captured too early or after suspension | Multi-snapshot polling; store suspension status |
+| 1 — Validate Edge | CLV analysis | False precision on N < 100; CI omitted | Always display CI and N alongside CLV point estimate |
+| 1 — Validate Edge | simulate_pnl.py | Used as edge evidence — circular (synthetic odds from model) | Deprecate as evidence source; label clearly |
+| 1 — Validate Edge | Staking policy | Negative edge produces tiny positive Kelly due to rounding | Add 2pp minimum edge floor in Kelly UI |
+| 1 — Validate Edge | Stage exposure | Multiple correlated bets per stage exceed intended risk | Per-stage bankroll cap in UI and log query |
+| 1 — Validate Edge | Bet logging | Survivorship bias from selective logging | Log all recommendations, not just placed bets |
+| 2 — Model Upgrade | Market odds feature | Look-ahead leakage if used in training on historical data | Only use at inference, or defer until historical odds corpus exists |
+| 2 — Model Upgrade | Interaction feature fix | 4 groups missing from manual path (`interact_diff_quality_x_form` = 0.0) | Refactor into shared `_compute_interactions()` helper first |
+| 2 — Model Upgrade | Calibration | Regresses in 55–80% range after retraining without bin-level check | Run `eval_calibration.py` on time-based split; gate on 3pp tolerance |
+| 2 — Model Upgrade | Training/serving skew | `diff_field_rank_quality` fix uses different reference population than training | Match reference population exactly; add unit test |
+| 3 — Automate | Race timezone | Cron fires in UTC but race starts in CEST — closes 2h late | Resolve race timezone from PCS country metadata; store UTC |
+| 3 — Automate | Cron reliability | Venv not activated on VPS; all jobs fail silently | Absolute venv Python path in crontab; sentinel log lines |
+| 3 — Automate | DNF settlement | Auto-settlement marks DNF as loss instead of void | Implement `void_on_dnf` policy matching Pinnacle rules |
+| 3 — Automate | Stale data | Pre-race report runs on rider features > 36h old | Check `scrape_log` freshness before generating report |
 
 ---
 
 ## Sources
 
-- Codebase: `features/pipeline.py` — `build_feature_vector_manual` implementation, startlist neutral defaults, interaction feature groups (lines 225–396)
-- Codebase: `data/scraper.py` — `_rate_limit()` global state, `REQUEST_DELAY=0.5s`, `fetch_with_retry` pattern (lines 27–76)
-- Codebase: `models/predict.py` — `predict_manual` signature, feature vector assembly via `fv.get(name, 0.0)` (lines 242–301)
-- Codebase: `.planning/codebase/CONCERNS.md` — confirmed `build_feature_vector_manual` startlist missing, interaction feature duplication, SQLite concurrency
-- RapidFuzz docs: preprocessing removed by default in 3.0.0 (HIGH confidence — [GitHub](https://github.com/rapidfuzz/RapidFuzz))
-- Pinnacle API closure: public API closed July 23rd, 2025 — [Arbusers thread](https://arbusers.com/access-to-pinnacle-api-closed-since-july-23rd-2025-t10682/) (MEDIUM confidence — page returned 403 but confirmed by multiple search results)
-- SQLite WAL concurrency: `busy_timeout` required; single-writer constraint — [Oldmoe blog](https://oldmoe.blog/2024/07/08/the-write-stuff-concurrent-write-transactions-in-sqlite/) (HIGH confidence)
-- procyclingstats lib: HTML parser, `ExpectedParsingError` ignored by default — [GitHub](https://github.com/themm1/procyclingstats) (HIGH confidence)
+- Codebase: `features/pipeline.py` — interaction feature groups in `build_feature_vector` (lines 157–221) vs `build_feature_vector_manual` (lines 320–396); confirmed 4 missing groups
+- Codebase: `data/pnl.py` — `auto_settle_from_results()` DNF logic (lines 327–344); `settle_bet()` bankroll deduction on loss (lines 187–198)
+- Codebase: `models/predict.py` — `kelly_criterion()` implementation; `kelly_f <= 0` guard (lines 100–117)
+- Codebase: `scripts/simulate_pnl.py` — `simulate_market_odds()` generates synthetic odds from model probs (line 58)
+- Codebase: `models/benchmark.py` — stratified vs time-based split implementations; confirmed ~1.3% accuracy gap documented in `decision_log.md`
+- PROJECT.md — Phase structure, kill/keep gates, known weaknesses, technical debt list
+- CLAUDE.md — Known issues, interaction feature duplication confirmed, `diff_field_rank_quality` hardcoded 0.0 confirmed
+- Kelly Criterion mathematics: correlation adjustment requirement — standard sports betting literature (HIGH confidence; Kelly (1956) assumes independent bets)
+- Closing line value methodology: CLV = closing implied prob / bet implied prob - 1; must use true closing line — Joseph Buchdahl, "Squares & Sharps" (MEDIUM confidence via established sports betting methodology)
+- Statistical significance for CLV: N=200 bets at 50% win rate requires ~200 observations for ±3% CI at 95% confidence — standard frequentist sample size calculation (HIGH confidence)
+- Timezone handling for sports events: pytz/zoneinfo standard library (HIGH confidence — Python 3.9+ ships `zoneinfo`)
+- Cron venv activation: cron uses `/bin/sh`, `source` not available — absolute path to venv Python is canonical fix (HIGH confidence — standard Linux cron behaviour)
