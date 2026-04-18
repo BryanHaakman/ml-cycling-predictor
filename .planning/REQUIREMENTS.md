@@ -83,46 +83,46 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ODDS-01 | — | Pending |
-| ODDS-02 | — | Pending |
-| ODDS-03 | — | Pending |
-| ODDS-04 | — | Pending |
-| ODDS-05 | — | Pending |
-| CLV-01 | — | Pending |
-| CLV-02 | — | Pending |
-| CLV-03 | — | Pending |
-| CLV-04 | — | Pending |
-| CLV-05 | — | Pending |
-| CLV-06 | — | Pending |
-| CLV-07 | — | Pending |
-| EDGE-01 | — | Pending |
-| EDGE-02 | — | Pending |
-| EDGE-03 | — | Pending |
-| EDGE-04 | — | Pending |
-| EDGE-05 | — | Pending |
-| EDGE-06 | — | Pending |
-| BET-01 | — | Pending |
-| BET-02 | — | Pending |
-| BET-03 | — | Pending |
-| MODEL-01 | — | Pending |
-| MODEL-02 | — | Pending |
-| MODEL-03 | — | Pending |
-| MODEL-04 | — | Pending |
-| MODEL-05 | — | Pending |
-| MODEL-06 | — | Pending |
-| MODEL-07 | — | Pending |
-| AUTO-01 | — | Pending |
-| AUTO-02 | — | Pending |
-| AUTO-03 | — | Pending |
-| AUTO-04 | — | Pending |
-| AUTO-05 | — | Pending |
-| AUTO-06 | — | Pending |
+| ODDS-01 | Phase 6 | Pending |
+| ODDS-02 | Phase 6 | Pending |
+| ODDS-03 | Phase 6 | Pending |
+| ODDS-04 | Phase 6 | Pending |
+| ODDS-05 | Phase 6 | Pending |
+| CLV-01 | Phase 6 | Pending |
+| CLV-02 | Phase 6 | Pending |
+| CLV-03 | Phase 6 | Pending |
+| CLV-04 | Phase 6 | Pending |
+| CLV-05 | Phase 6 | Pending |
+| CLV-06 | Phase 6 | Pending |
+| CLV-07 | Phase 6 | Pending |
+| BET-01 | Phase 6 | Pending |
+| BET-02 | Phase 6 | Pending |
+| BET-03 | Phase 6 | Pending |
+| EDGE-01 | Phase 7 | Pending |
+| EDGE-02 | Phase 7 | Pending |
+| EDGE-03 | Phase 7 | Pending |
+| EDGE-04 | Phase 7 | Pending |
+| EDGE-05 | Phase 7 | Pending |
+| EDGE-06 | Phase 7 | Pending |
+| MODEL-01 | Phase 8 | Pending |
+| MODEL-02 | Phase 8 | Pending |
+| MODEL-03 | Phase 8 | Pending |
+| MODEL-04 | Phase 8 | Pending |
+| MODEL-05 | Phase 8 | Pending |
+| MODEL-06 | Phase 8 | Pending |
+| MODEL-07 | Phase 8 | Pending |
+| AUTO-01 | Phase 9 | Pending |
+| AUTO-02 | Phase 9 | Pending |
+| AUTO-03 | Phase 9 | Pending |
+| AUTO-04 | Phase 9 | Pending |
+| AUTO-05 | Phase 9 | Pending |
+| AUTO-06 | Phase 9 | Pending |
 
 **Coverage:**
 - v2.0 requirements: 34 total
-- Mapped to phases: 0
-- Unmapped: 34 (pending roadmap creation)
+- Mapped to phases: 34
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-18*
-*Last updated: 2026-04-18 after initial definition*
+*Last updated: 2026-04-18 — traceability mapped after roadmap creation*
