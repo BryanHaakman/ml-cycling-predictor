@@ -113,9 +113,58 @@
                 </div>
             </div>
 
+            <div class="stats-grid" id="clv-stats-grid">
+              <div class="stat-card">
+                <span class="value" id="clv-avg" style="color:var(--muted)">—</span>
+                <span class="label">Avg CLV</span>
+              </div>
+              <div class="stat-card">
+                <span class="value" id="clv-no-vig" style="color:var(--muted)">—</span>
+                <span class="label">Vig-Free CLV</span>
+              </div>
+              <div class="stat-card">
+                <span class="value" id="clv-ci" style="color:var(--muted)">—</span>
+                <span class="label">95% CI</span>
+              </div>
+              <div class="stat-card">
+                <span class="value" id="clv-n-bets" style="color:var(--text)">—</span>
+                <span class="label">Settled w/ CLV</span>
+              </div>
+            </div>
+
+            <div class="chart-container" id="clv-chart-container" style="display:none">
+              <h3 style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:16px;">Rolling CLV (last 50 bets)</h3>
+              <canvas id="clvChart" height="200"></canvas>
+            </div>
+            <div id="clv-chart-empty" style="color:var(--muted);font-size:0.85rem;text-align:center;padding:24px;">
+              Place 5+ bets to see rolling CLV
+            </div>
+
             <div class="chart-container">
                 <h3>Bankroll Over Time</h3>
                 <canvas id="bankroll-chart"></canvas>
+            </div>
+
+            <div id="terrain-clv-section">
+              <h2 style="font-size:1.1rem;font-weight:600;margin:24px 0 16px;">CLV by Stage Type</h2>
+              <div style="overflow-x:auto">
+                <table id="terrain-clv-table">
+                  <thead>
+                    <tr>
+                      <th>Stage Type</th>
+                      <th>Bets</th>
+                      <th>Avg CLV</th>
+                      <th>Vig-Free CLV</th>
+                      <th>CI</th>
+                    </tr>
+                  </thead>
+                  <tbody id="terrain-clv-body">
+                  </tbody>
+                </table>
+              </div>
+              <div id="terrain-clv-empty" style="color:var(--muted);font-size:0.85rem;text-align:center;padding:16px;">
+                No settled bets yet. Terrain breakdown will appear after first settlement.
+              </div>
             </div>
 
             <div class="section-header">
@@ -132,6 +181,7 @@
                         <th>Edge</th>
                         <th>Stake</th>
                         <th>P&L</th>
+                        <th>CLV</th>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -141,6 +191,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <script>
         function formatMatchup(b) {
             const nameA = b.rider_a_name || '—';
@@ -244,6 +295,10 @@
                     <button class="btn btn-muted btn-sm" onclick="voidBet(${b.id})">Void</button>
                 ` : '—';
 
+                const clvVal = (b.clv !== null && b.clv !== undefined)
+                    ? `<span class="${b.clv > 0 ? 'positive' : b.clv < 0 ? 'negative' : 'neutral'}">${(b.clv * 100).toFixed(1)}%</span>`
+                    : '<span class="neutral">—</span>';
+
                 tbody.innerHTML += `<tr>
                     <td>${b.race_date || b.created_at?.split('T')[0] || '—'}</td>
                     <td>${b.race_name || '—'}</td>
@@ -252,6 +307,7 @@
                     <td>${b.edge ? (b.edge * 100).toFixed(1) + '%' : '—'}</td>
                     <td>$${b.stake?.toFixed(2) || '—'} CAD</td>
                     <td class="${profitCls}">${b.status !== 'pending' ? '$' + b.profit?.toFixed(2) + ' CAD' : '—'}</td>
+                    <td>${clvVal}</td>
                     <td><span class="badge ${badgeCls}">${b.status}</span></td>
                     <td>${actions}</td>
                 </tr>`;
@@ -292,7 +348,158 @@
             loadSummary(); loadHistory();
         }
 
-        loadSummary(); loadHistory();
+        function typeDisplayName(t) {
+            const map = {flat:'Flat', mountain:'Mountain', hilly:'Hilly', tt:'Time Trial', cobbles:'Cobbles', unknown:'Unknown'};
+            return map[t] || t;
+        }
+
+        async function loadClvSummary() {
+            try {
+                const res = await fetch('/api/pnl/clv-summary');
+                const data = await res.json();
+                if (data.n_bets > 0) {
+                    const avgEl = document.getElementById('clv-avg');
+                    avgEl.textContent = (data.avg_clv * 100).toFixed(1) + '%';
+                    avgEl.style.color = data.avg_clv > 0 ? 'var(--green)' : data.avg_clv < 0 ? 'var(--red)' : 'var(--muted)';
+                    const vigEl = document.getElementById('clv-no-vig');
+                    vigEl.textContent = (data.avg_clv_no_vig * 100).toFixed(1) + '%';
+                    vigEl.style.color = data.avg_clv_no_vig > 0 ? 'var(--green)' : data.avg_clv_no_vig < 0 ? 'var(--red)' : 'var(--muted)';
+                    document.getElementById('clv-ci').textContent = data.n_bets >= 5
+                        ? '[' + (data.ci_low * 100).toFixed(1) + '%, ' + (data.ci_high * 100).toFixed(1) + '%]'
+                        : '—';
+                    document.getElementById('clv-n-bets').textContent = data.n_bets;
+                }
+            } catch (e) {
+                console.warn('CLV summary load failed:', e);
+            }
+        }
+
+        async function loadTerrainClv() {
+            try {
+                const res = await fetch('/api/pnl/clv-by-terrain');
+                const data = await res.json();
+                if (data.length > 0) {
+                    document.getElementById('terrain-clv-empty').style.display = 'none';
+                    document.getElementById('terrain-clv-table').style.display = '';
+                    const tbody = document.getElementById('terrain-clv-body');
+                    tbody.innerHTML = data.map(row => `<tr>
+                        <td>${typeDisplayName(row.stage_type)}</td>
+                        <td>${row.n_bets}</td>
+                        <td class="${row.avg_clv >= 0 ? 'positive' : 'negative'}">${(row.avg_clv * 100).toFixed(1)}%</td>
+                        <td class="${row.avg_clv_no_vig >= 0 ? 'positive' : 'negative'}">${(row.avg_clv_no_vig * 100).toFixed(1)}%</td>
+                        <td style="color:var(--muted)">${row.n_bets >= 5 ? '[' + (row.ci_low * 100).toFixed(1) + '%, ' + (row.ci_high * 100).toFixed(1) + '%]' : '—'}</td>
+                    </tr>`).join('');
+                } else {
+                    document.getElementById('terrain-clv-table').style.display = 'none';
+                    document.getElementById('terrain-clv-empty').style.display = '';
+                }
+            } catch (e) {
+                console.warn('Terrain CLV load failed:', e);
+            }
+        }
+
+        async function loadRollingClvChart() {
+            try {
+                const res = await fetch('/api/pnl/history?limit=9999');
+                const bets = await res.json();
+                const clvBets = bets.filter(b => b.clv !== null && b.clv !== undefined);
+
+                if (clvBets.length < 5) {
+                    document.getElementById('clv-chart-container').style.display = 'none';
+                    document.getElementById('clv-chart-empty').style.display = '';
+                    return;
+                }
+
+                document.getElementById('clv-chart-container').style.display = '';
+                document.getElementById('clv-chart-empty').style.display = 'none';
+
+                const labels = [];
+                const rollingData = [];
+                const cumulativeData = [];
+                const zeroLine = [];
+                let cumSum = 0;
+
+                // Reverse so oldest first
+                const ordered = clvBets.slice().reverse();
+
+                for (let i = 0; i < ordered.length; i++) {
+                    labels.push(i + 1);
+                    cumSum += ordered[i].clv;
+                    cumulativeData.push(((cumSum / (i + 1)) * 100));
+
+                    const windowStart = Math.max(0, i - 49);
+                    let windowSum = 0;
+                    for (let j = windowStart; j <= i; j++) {
+                        windowSum += ordered[j].clv;
+                    }
+                    rollingData.push((windowSum / (i - windowStart + 1)) * 100);
+                    zeroLine.push(0);
+                }
+
+                const ctx = document.getElementById('clvChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: '50-bet Rolling Avg CLV',
+                                data: rollingData,
+                                borderColor: '#f5c518',
+                                borderWidth: 2,
+                                pointRadius: 0,
+                                tension: 0.3,
+                                fill: false,
+                            },
+                            {
+                                label: 'Cumulative Avg CLV',
+                                data: cumulativeData,
+                                borderColor: '#448aff',
+                                borderWidth: 1.5,
+                                borderDash: [5, 5],
+                                pointRadius: 0,
+                                tension: 0.3,
+                                fill: false,
+                            },
+                            {
+                                label: 'Zero',
+                                data: zeroLine,
+                                borderColor: '#8a8d9b',
+                                borderWidth: 1,
+                                borderDash: [4, 4],
+                                pointRadius: 0,
+                                fill: false,
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                labels: { color: '#8a8d9b', font: { size: 11 } },
+                            },
+                        },
+                        scales: {
+                            x: {
+                                title: { display: true, text: 'Bet #', color: '#8a8d9b' },
+                                ticks: { color: '#8a8d9b' },
+                                grid: { color: 'rgba(42,45,58,0.5)' },
+                            },
+                            y: {
+                                title: { display: true, text: 'CLV %', color: '#8a8d9b' },
+                                ticks: { color: '#8a8d9b' },
+                                grid: { color: 'rgba(42,45,58,0.5)' },
+                            },
+                        },
+                    },
+                });
+            } catch (e) {
+                console.warn('Rolling CLV chart load failed:', e);
+            }
+        }
+
+        loadSummary(); loadHistory(); loadClvSummary(); loadTerrainClv(); loadRollingClvChart();
     </script>
 </body>
 </html>
