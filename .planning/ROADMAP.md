@@ -23,7 +23,7 @@
 
 **Milestone Goal:** Prove or disprove that PaceIQ has a real betting edge against Pinnacle's closing line. If the edge is real (CLV >= +1.5% over 100+ bets), upgrade the model and automate the daily workflow. If not (CLV < 0 over 200 bets), stop model investment.
 
-- [ ] **Phase 6: Odds Scraping & CLV Infrastructure** - Rebuild the Pinnacle scraper and instrument every bet with a closing-line value signal
+- [x] **Phase 6: Odds Scraping & CLV Infrastructure** - Rebuild the Pinnacle scraper and instrument every bet with a closing-line value signal — completed 2026-04-19
 - [ ] **Phase 7: Edge Analysis & Risk Controls** - Surface edge-bucket ROI, cap stage exposure, and build the CLV drift early-warning system
 - [ ] **Phase 8: Model Upgrades** - Fix known serving bugs and extend the feature pipeline (gated by Phase 6 CLV signal)
 - [ ] **Phase 9: Automation** - Schedule pre-race reports, closing-odds capture, settlement, and Discord alerts end-to-end
@@ -97,7 +97,7 @@ Phases execute in numeric order: 6 → 7 → 8 (gated) → 9
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 6. Odds Scraping & CLV Infrastructure | v2.0 | 0/5 | Planning complete | - |
+| 6. Odds Scraping & CLV Infrastructure | v2.0 | 5/5 | Complete | 2026-04-19 |
 | 7. Edge Analysis & Risk Controls | v2.0 | 0/? | Not started | - |
 | 8. Model Upgrades | v2.0 | 0/? | Not started | - |
 | 9. Automation | v2.0 | 0/? | Not started | - |

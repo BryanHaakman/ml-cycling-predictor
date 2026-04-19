@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Edge Validation & System Maturity
-status: executing
-stopped_at: Completed 06-03-PLAN.md — Flask API layer rewiring
-last_updated: "2026-04-19T01:57:00Z"
-last_activity: 2026-04-19 -- Plan 06-03 complete (Flask API layer)
+status: ready
+stopped_at: Phase 6 complete — advancing to Phase 7
+last_updated: "2026-04-19T19:30:00Z"
+last_activity: 2026-04-19 -- Phase 6 complete, human verification passed
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 5
+  percent: 25
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-18)
 
 **Core value:** Edge detection — surfacing when PaceIQ's win probability differs from Pinnacle's implied odds by enough (>5% flag, >8% act) to justify a bet.
-**Current focus:** Phase 6 — Odds Scraping & CLV Infrastructure
+**Current focus:** Phase 7 — Edge Analysis & Risk Controls
 
 ## Current Position
 
-Phase: 6 of 9 (Odds Scraping & CLV Infrastructure)
-Plan: 01 + 02 + 03 complete, executing wave 2
-Status: Executing
-Last activity: 2026-04-19 -- Plan 06-03 complete (Flask API layer)
+Phase: 7 of 9 (Edge Analysis & Risk Controls)
+Plan: Not yet planned
+Status: Ready to discuss
+Last activity: 2026-04-19 -- Phase 6 complete
 
-Progress: [██████░░░░] 60%
+Progress: [██▓░░░░░░░] 25%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 3
+- Total plans completed: 5
 - Average duration: ~6m
 - Total execution time: ~17m
 
@@ -44,7 +44,7 @@ Progress: [██████░░░░] 60%
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 06 | 3 | ~17m | ~6m |
+| 06 | 5 | ~25m | ~5m |
 
 *Updated after each plan completion*
 
@@ -59,6 +59,16 @@ Progress: [██████░░░░] 60%
 - diff_field_rank_quality hardcoded to 0.0 in manual path (importance-#3 feature) — MODEL-03
 - Stratified split overestimates live performance by ~1.3% vs time-based split
 
+### From Phase 6
+
+- Pinnacle scraper uses Playwright headless browser (data/pinnacle_scraper.py)
+- "The Field" entries skipped in name resolver (not a real rider)
+- Bets stored in SQLite bets table (data/bets.csv deprecated)
+- Race start times scraped from Pinnacle in EST
+- Batch bet submission — user fills in stakes, submits all at once
+- Odds editable on pending bets in P&L tracker
+- Bankroll adjustable via clickable card on /pnl
+
 ### Key Gates
 
 - **Phase 8 CLV gate:** CLV >= +1.5% over 100+ bets → proceed; CLV < 0 over 200 bets → kill Phase 8
@@ -66,9 +76,7 @@ Progress: [██████░░░░] 60%
 
 ### Blockers/Concerns
 
-- Pinnacle guest API (data/odds.py) REPLACED — data/pinnacle_scraper.py now provides Playwright scraper (Plan 06-01)
-- data/bets.csv deprecated — SQLite bets table is single source of truth (decided in Phase 6 context)
-- Race start times scraped from Pinnacle in EST (decided in Phase 6 context)
+- None currently
 
 ## Deferred Items
 
@@ -80,5 +88,5 @@ Progress: [██████░░░░] 60%
 ## Session Continuity
 
 Last session: 2026-04-19
-Stopped at: Completed 06-03-PLAN.md — Flask API layer rewiring
-Resume file: .planning/phases/06-odds-scraping-clv-infrastructure/06-03-SUMMARY.md
+Stopped at: Phase 6 complete — ready for Phase 7 discussion
+Resume file: N/A
