@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-18T23:05:00Z",
+  "phase": "6",
+  "phase_name": "odds-scraping-clv-infrastructure",
+  "phase_dir": ".planning/phases/06-odds-scraping-clv-infrastructure",
+  "plan": 5,
+  "task": 2,
+  "total_tasks": 2,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": "06-01", "name": "Playwright Pinnacle Scraper", "status": "done", "commit": "bcc476b"},
+    {"id": "06-02", "name": "CLV Data Layer", "status": "done", "commit": "f838dd9"},
+    {"id": "06-03", "name": "Flask API Layer", "status": "done", "commit": "aa4f47e"},
+    {"id": "06-04", "name": "Bet Booking UI", "status": "done", "commit": "214f260"},
+    {"id": "06-05", "name": "CLV Dashboard", "status": "done", "commit": "a2fa937"}
+  ],
+  "remaining_tasks": [],
+  "blockers": [
+    {"description": "User needs to restart Flask server to pick up stage_url fix", "type": "human_action", "workaround": "Ctrl+C then python webapp/app.py"}
+  ],
+  "human_actions_pending": [
+    {"action": "Restart Flask server and re-test Book Bet flow", "context": "stage_url fix committed but old server was still running", "blocking": true},
+    {"action": "Visual verification of bet booking and CLV dashboard in browser", "context": "3 human verification items in VERIFICATION.md", "blocking": true}
+  ],
+  "decisions": [
+    {"decision": "All rows bookable, not just value bets", "rationale": "User feedback: wants ability to book any matchup", "phase": "6"},
+    {"decision": "Single H2H mode removed", "rationale": "User request: Batch H2H is the primary workflow", "phase": "6"},
+    {"decision": "stage_url made optional in /api/pnl/bet", "rationale": "Pinnacle flow has no PCS stage URLs; generates synthetic pinnacle/{race-name}", "phase": "6"}
+  ],
+  "uncommitted_files": ["data/name_mappings.json", "data/scrape_log.jsonl"],
+  "next_action": "Restart Flask server (python webapp/app.py), test Book Bet flow, verify CLV dashboard, then approve or report issues",
+  "context_notes": "All 5 plans executed across 3 waves. Verification reports human_needed for 3 UI items. The stage_url bug was fixed but user was running old server. Once human verification passes, phase can be marked complete."
+}
