@@ -42,7 +42,7 @@
   5. The P&L UI shows per-bet CLV, rolling average CLV, 95% bootstrap confidence interval, and a CLV breakdown by stage type (flat/mountain/TT)
 **Plans:** 5 plans
 Plans:
-- [ ] 06-01-PLAN.md — Playwright scraper module with snapshot storage
+- [ ] 06-01-PLAN.md — Playwright scraper module, snapshot storage, and closing-odds scheduler
 - [ ] 06-02-PLAN.md — CLV schema, computation, settlement, bankroll, bet history filters
 - [ ] 06-03-PLAN.md — Flask API wiring (pinnacle_bp + CLV/bet endpoints)
 - [ ] 06-04-PLAN.md — Bet booking UI on batch prediction page

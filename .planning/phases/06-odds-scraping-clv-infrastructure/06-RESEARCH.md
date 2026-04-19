@@ -89,6 +89,7 @@ None
 | P&L CLV display | Frontend (Jinja2/JS) | Backend (Flask API) | Server computes stats + bootstrap CI, frontend renders charts |
 | Bankroll calculation (D-20) | Backend (pnl.py) | -- | SQL aggregation: cash + pending stakes |
 | Name resolution | Backend (name_resolver.py) | -- | Reuse existing 4-stage pipeline |
+| Closing-odds scheduler | Backend (Python script/cron) | -- | Reads start times from snapshots, schedules closing-odds scrape |
 
 ## Standard Stack
 
@@ -161,6 +162,11 @@ playwright install chromium  # only if browsers missing on VPS
      |  - Batch prediction  |  <-- bet booking UI
      |  - P&L page          |  <-- CLV metrics + charts
      +----------------------+
+               |
+     +----------v----------+
+     | schedule_closing_odds|  <-- reads start times, triggers closing scrape
+     | (scripts/)           |
+     +----------------------+
 ```
 
 ### Recommended Project Structure
@@ -178,6 +184,7 @@ webapp/
     predictions.html     # MODIFY: add bet booking with editable stakes + confirmation
 scripts/
   scrape_odds.py         # NEW: CLI entry point for cron (--headed flag)
+  schedule_closing_odds.py  # NEW: reads start times from snapshots, triggers closing-odds scrape at race start
 tests/
   test_pinnacle_scraper.py  # NEW: replaces test_odds.py
   test_clv.py               # NEW: CLV computation + vig removal tests
@@ -481,22 +488,25 @@ Verified via live Playwright scraping on 2026-04-18.
 | A3 | CSS prefix selectors (`[class*=matchupMetadata]`) will remain stable across Pinnacle deploys | Common Pitfalls | Medium -- if Pinnacle renames the prefix (not just the hash), selectors break. Mitigation: monitor and alert on zero-matchup scrapes |
 | A4 | Pinnacle start times are in Eastern Time (based on page showing "GMT -04:00" = EDT) | DOM Structure | Medium -- could vary by user location/cookies. Mitigation: parse the timezone offset from page if available |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Full date resolution for matchups**
    - What we know: Matchup rows show only HH:MM times (e.g., "05:10"). Date grouping headers say "TOMORROW" or "TODAY".
    - What's unclear: How to derive the full YYYY-MM-DD date for scheduling closing-odds cron.
    - Recommendation: Combine the date bar text ("TOMORROW" = today + 1 day) with the HH:MM time. Store as ISO datetime with EST timezone offset.
+   - RESOLVED: Use `_resolve_date_from_bar()` in pinnacle_scraper.py to parse "TODAY"/"TOMORROW"/date strings into YYYY-MM-DD. Default to today if unparseable.
 
 2. **Odds format toggle persistence**
    - What we know: Default display is American odds. There's an odds format selector on the page.
    - What's unclear: Whether setting the toggle to "Decimal" persists via cookies or requires clicking each session.
    - Recommendation: Don't rely on the toggle -- always parse American odds and convert. This is more robust than assuming the toggle state.
+   - RESOLVED: Always parse American odds and convert via `parse_american_odds()`. Do not rely on toggle state.
 
 3. **VPS Playwright browser installation**
    - What we know: Playwright 1.58.0 is installed locally with Chromium working.
    - What's unclear: Whether Chromium browsers are installed on the Hostinger VPS.
    - Recommendation: Include `playwright install chromium` in VPS setup instructions. The `--with-deps` flag installs system dependencies on Linux.
+   - RESOLVED: Include `playwright install chromium --with-deps` in VPS setup instructions. Plan 06-01 Task 2 CLI entry point notes this requirement.
 
 ## Environment Availability
 
