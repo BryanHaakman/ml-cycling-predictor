@@ -79,9 +79,9 @@
 
         <div id="dashboard" style="display:none;">
             <div class="stats-grid">
-                <div class="stat-card">
+                <div class="stat-card" style="cursor:pointer;" onclick="promptSetBankroll()" title="Click to adjust bankroll">
                     <span class="value" id="s-bankroll">—</span>
-                    <span class="label">Bankroll</span>
+                    <span class="label">Bankroll ✎</span>
                 </div>
                 <div class="stat-card">
                     <span class="value" id="s-profit">—</span>
@@ -303,7 +303,9 @@
                     <td>${b.race_date || b.created_at?.split('T')[0] || '—'}</td>
                     <td>${b.race_name || '—'}</td>
                     <td>${formatMatchup(b)}</td>
-                    <td>${b.decimal_odds?.toFixed(2) || '—'}</td>
+                    <td>${b.status === 'pending'
+                        ? `<span class="editable-odds" style="cursor:pointer;border-bottom:1px dashed var(--muted);" onclick="editOdds(${b.id}, ${b.decimal_odds})" title="Click to edit">${b.decimal_odds?.toFixed(2) || '—'}</span>`
+                        : (b.decimal_odds?.toFixed(2) || '—')}</td>
                     <td>${b.edge ? (b.edge * 100).toFixed(1) + '%' : '—'}</td>
                     <td>$${b.stake?.toFixed(2) || '—'} CAD</td>
                     <td class="${profitCls}">${b.status !== 'pending' ? '$' + b.profit?.toFixed(2) + ' CAD' : '—'}</td>
@@ -322,6 +324,33 @@
                 body: JSON.stringify({bankroll: parseFloat(val)})
             });
             loadSummary(); loadHistory();
+        }
+
+        async function promptSetBankroll() {
+            const current = document.getElementById('s-bankroll').textContent;
+            const val = prompt(`Set bankroll (current: ${current}):`, '');
+            if (val === null || val.trim() === '') return;
+            const amount = parseFloat(val);
+            if (isNaN(amount) || amount <= 0) { alert('Enter a positive number'); return; }
+            await fetch('/api/pnl/bankroll', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({bankroll: amount})
+            });
+            loadSummary(); loadHistory();
+        }
+
+        async function editOdds(betId, currentOdds) {
+            const val = prompt(`Update odds (current: ${currentOdds.toFixed(2)}):`, currentOdds.toFixed(2));
+            if (val === null || val.trim() === '') return;
+            const newOdds = parseFloat(val);
+            if (isNaN(newOdds) || newOdds < 1.01) { alert('Enter valid decimal odds (>= 1.01)'); return; }
+            const res = await fetch('/api/pnl/update-odds', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({bet_id: betId, decimal_odds: newOdds})
+            });
+            const data = await res.json();
+            if (data.error) { alert(data.error); return; }
+            loadHistory();
         }
 
         async function settleBet(id, won) {

@@ -151,6 +151,13 @@ class NameResolver:
     Returns:
       ResolveResult with url populated on success, None on failure.
     """
+    # Skip non-rider entries (e.g. "The Field" in rider-vs-field markets)
+    if pinnacle_name.strip().lower() == "the field":
+      return ResolveResult(
+        url=None, best_candidate_url=None, best_candidate_name=None,
+        best_score=None, method="skipped",
+      )
+
     # Stage 1: persistent cache
     if pinnacle_name in self._cache:
       return ResolveResult(

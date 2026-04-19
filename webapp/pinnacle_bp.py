@@ -169,7 +169,9 @@ def pinnacle_load():
         snap.odds_a, snap.odds_b,
       )
 
+      matchup_id = f"{snap.rider_a_name}_vs_{snap.rider_b_name}".replace(" ", "_")
       pair: dict[str, Any] = {
+        "matchup_id": matchup_id,
         "pinnacle_name_a": snap.rider_a_name,
         "pinnacle_name_b": snap.rider_b_name,
         "rider_a_url": result_a.url,

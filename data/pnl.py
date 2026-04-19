@@ -399,6 +399,24 @@ def void_bet(bet_id: int, db_path: str = DB_PATH):
     conn.close()
 
 
+def update_bet_odds(bet_id: int, new_odds: float, db_path: str = DB_PATH):
+    """Update the decimal odds on a pending bet."""
+    conn = get_pnl_db(db_path)
+    bet = conn.execute("SELECT * FROM bets WHERE id = ?", (bet_id,)).fetchone()
+    if not bet:
+        conn.close()
+        raise ValueError(f"Bet {bet_id} not found")
+    if bet["status"] != "pending":
+        conn.close()
+        raise ValueError(f"Bet {bet_id} is already {bet['status']} — can only edit pending bets")
+    conn.execute(
+        "UPDATE bets SET decimal_odds = ? WHERE id = ?",
+        (new_odds, bet_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_pnl_summary(db_path: str = DB_PATH) -> dict:
     """Get P&L summary statistics."""
     conn = get_pnl_db(db_path)

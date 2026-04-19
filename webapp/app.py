@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.scraper import get_db, DB_PATH
 from data.pnl import (
-    get_pnl_db, place_bet, settle_bet, void_bet,
+    get_pnl_db, place_bet, settle_bet, void_bet, update_bet_odds,
     get_pnl_summary, get_bet_history, get_current_bankroll,
     set_initial_bankroll, auto_settle_from_results,
     get_clv_summary, get_clv_by_terrain, get_total_bankroll,
@@ -483,6 +483,21 @@ def api_void_bet():
     try:
         void_bet(int(bet_id))
         return jsonify({"ok": True, "bankroll": get_current_bankroll()})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/pnl/update-odds", methods=["POST"])
+@_require_localhost
+def api_update_odds():
+    data = request.json
+    bet_id = data.get("bet_id")
+    new_odds = data.get("decimal_odds")
+    if bet_id is None or new_odds is None:
+        return jsonify({"error": "Need bet_id and decimal_odds"}), 400
+    try:
+        update_bet_odds(int(bet_id), float(new_odds))
+        return jsonify({"ok": True})
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
