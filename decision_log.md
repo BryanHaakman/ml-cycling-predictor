@@ -4,6 +4,18 @@ All ML experiments, training runs, and pipeline changes are documented here.
 
 ---
 
+## 2026-04-18 — Replace Pinnacle guest API with Playwright HTML scraper
+
+**Hypothesis:** The Pinnacle guest API (`data/odds.py`) is broken and must be replaced with a Playwright-based HTML scraper that navigates the React SPA to extract H2H cycling matchups.
+
+**Method:** Created `data/pinnacle_scraper.py` using Playwright sync API with prefix-based CSS selectors (`[class*=matchupMetadata]`, `[data-test-id="moneyline"]`). Two-level scrape: (1) leagues page discovers active races, (2) each race matchups page extracts rider names, American odds, and start times. American odds are converted to decimal via `parse_american_odds()` before storage. Snapshots stored in `market_snapshots` SQLite table with parameterized queries. Anti-bot: 1-2s random delays, exponential backoff retry. Browser cleanup via try/finally.
+
+**Results:** 21 unit tests pass (mocked Playwright Page). Module exports: `MatchupSnapshot`, `PinnacleScrapeError`, `scrape_cycling_markets()`, `save_snapshot()`, `parse_american_odds()`, `_american_to_decimal()`, `get_upcoming_start_times()`.
+
+**Conclusion:** Guest API (guest.api.arcadia.pinnacle.com) is no longer functional. Playwright HTML scraping is the only viable approach. Research confirmed Pinnacle.ca displays American odds by default (not decimal as D-07 assumed), so conversion is required. `data/odds.py` deleted — fully replaced by `data/pinnacle_scraper.py`.
+
+---
+
 ## 2026-03-25 — Baseline training (all race tiers, max_rank=50)
 
 **Hypothesis:** Establish baseline accuracy with all available race data and default parameters.
