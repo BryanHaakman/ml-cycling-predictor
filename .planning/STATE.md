@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Edge Validation & System Maturity
 status: executing
-stopped_at: Completed 06-02-PLAN.md — CLV computation and P&L data layer
-last_updated: "2026-04-19T01:47:14Z"
-last_activity: 2026-04-19 -- Plan 06-02 complete (CLV data layer)
+stopped_at: Completed 06-01-PLAN.md — Pinnacle Playwright scraper
+last_updated: "2026-04-19T01:50:00Z"
+last_activity: 2026-04-19 -- Plan 06-01 complete (Playwright scraper)
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
-  percent: 20
+  completed_plans: 2
+  percent: 40
 ---
 
 # Project State
@@ -26,25 +26,25 @@ See: .planning/PROJECT.md (updated 2026-04-18)
 ## Current Position
 
 Phase: 6 of 9 (Odds Scraping & CLV Infrastructure)
-Plan: 02 complete, executing wave 1
+Plan: 01 + 02 complete, executing wave 1
 Status: Executing
-Last activity: 2026-04-19 -- Plan 06-02 complete (CLV data layer)
+Last activity: 2026-04-19 -- Plan 06-01 complete (Playwright scraper)
 
-Progress: [██░░░░░░░░] 20%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 1
-- Average duration: 4m42s
-- Total execution time: 4m42s
+- Total plans completed: 2
+- Average duration: ~6m
+- Total execution time: ~13m
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 06 | 1 | 4m42s | 4m42s |
+| 06 | 2 | ~13m | ~6m |
 
 *Updated after each plan completion*
 
@@ -66,7 +66,7 @@ Progress: [██░░░░░░░░] 20%
 
 ### Blockers/Concerns
 
-- Pinnacle guest API (data/odds.py) is broken — Phase 6 rebuilds scraper via Playwright (decided in context)
+- Pinnacle guest API (data/odds.py) REPLACED — data/pinnacle_scraper.py now provides Playwright scraper (Plan 06-01)
 - data/bets.csv deprecated — SQLite bets table is single source of truth (decided in Phase 6 context)
 - Race start times scraped from Pinnacle in EST (decided in Phase 6 context)
 
@@ -80,5 +80,5 @@ Progress: [██░░░░░░░░] 20%
 ## Session Continuity
 
 Last session: 2026-04-19
-Stopped at: Completed 06-02-PLAN.md — CLV computation and P&L data layer
-Resume file: .planning/phases/06-odds-scraping-clv-infrastructure/06-02-SUMMARY.md
+Stopped at: Completed 06-01-PLAN.md — Pinnacle Playwright scraper + CLI + scheduler
+Resume file: .planning/phases/06-odds-scraping-clv-infrastructure/06-01-SUMMARY.md
