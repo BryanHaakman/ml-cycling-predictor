@@ -21,6 +21,7 @@ from data.pnl import (
     get_pnl_db, place_bet, settle_bet, void_bet,
     get_pnl_summary, get_bet_history, get_current_bankroll,
     set_initial_bankroll, auto_settle_from_results,
+    get_clv_summary, get_clv_by_terrain, get_total_bankroll,
 )
 from models.predict import Predictor, kelly_criterion, decimal_odds_to_implied_prob
 from webapp.auth import _require_localhost
@@ -401,7 +402,15 @@ def api_pnl_summary():
 @app.route("/api/pnl/history")
 def api_pnl_history():
     limit = request.args.get("limit", 50, type=int)
-    return jsonify(get_bet_history(limit=limit))
+    status = request.args.get("status")
+    race_name = request.args.get("race_name")
+    stage_type = request.args.get("stage_type")
+    date_from = request.args.get("date_from")
+    date_to = request.args.get("date_to")
+    return jsonify(get_bet_history(
+        limit=limit, status=status, race_name=race_name,
+        stage_type=stage_type, date_from=date_from, date_to=date_to,
+    ))
 
 
 @app.route("/api/pnl/bankroll", methods=["POST"])
@@ -440,6 +449,8 @@ def api_place_bet():
             stake=float(data["stake"]),
             model_used=data.get("model_used", ""),
             notes=data.get("notes", ""),
+            recommended_stake=float(data.get("recommended_stake", 0)),
+            capture_timestamp=data.get("capture_timestamp", ""),
         )
         return jsonify({"bet_id": bet_id, "bankroll": get_current_bankroll()})
     except Exception as e:
@@ -474,9 +485,28 @@ def api_void_bet():
 
 
 @app.route("/api/pnl/auto-settle", methods=["POST"])
+@_require_localhost
 def api_auto_settle():
     count = auto_settle_from_results()
     return jsonify({"settled": count, "bankroll": get_current_bankroll()})
+
+
+@app.route("/api/pnl/clv-summary")
+def api_clv_summary():
+    """Return CLV summary stats with bootstrap CI for P&L page."""
+    return jsonify(get_clv_summary())
+
+
+@app.route("/api/pnl/clv-by-terrain")
+def api_clv_by_terrain():
+    """Return CLV breakdown by stage type."""
+    return jsonify(get_clv_by_terrain())
+
+
+@app.route("/api/pnl/total-bankroll")
+def api_total_bankroll():
+    """Return total bankroll (cash + pending stakes) per D-20."""
+    return jsonify({"bankroll": get_total_bankroll()})
 
 
 
