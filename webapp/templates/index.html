@@ -257,6 +257,27 @@
         .unresolved-rider .autocomplete-wrap > input {
             border-color: #ff9800;
         }
+        .stake-input {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 0.85rem;
+            width: 80px;
+        }
+        .stake-input:focus {
+            border-color: var(--accent);
+            outline: none;
+        }
+        .book-btn { min-width: 80px; }
+        .snapshot-status { margin-top: 8px; }
+        .inline-error {
+            color: var(--red);
+            font-size: 0.85rem;
+            display: block;
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -430,6 +451,13 @@
                 <label style="visibility:hidden;">Action</label>
                 <button class="btn-secondary" id="refresh-odds-btn" onclick="refreshOdds()" disabled>Refresh Odds</button>
             </div>
+            <div class="form-group" style="flex:0 0 auto;">
+                <label style="visibility:hidden;">Action</label>
+                <button class="btn" id="btn-capture-snapshot" onclick="captureSnapshot()">Capture Snapshot</button>
+            </div>
+        </div>
+        <div id="snapshot-status" class="snapshot-status" style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;margin-top:-8px;margin-bottom:16px;">
+            No snapshot for today
         </div>
         <div class="form-group full" style="margin-bottom:1.5rem;">
             <label>Race Setup</label>
@@ -545,6 +573,9 @@
                             <th>Edge</th>
                             <th>½ Kelly</th>
                             <th>Value?</th>
+                            <th>Rec. ¼ Kelly</th>
+                            <th>Stake</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody id="batch-results-body"></tbody>
@@ -907,7 +938,10 @@
             document.getElementById('tmb-batch').classList.toggle('active', mode === 'batch');
             document.getElementById('single-mode').style.display = mode === 'single' ? '' : 'none';
             document.getElementById('batch-mode').style.display = mode === 'batch' ? '' : 'none';
-            if (mode === 'batch') loadBatchSavedRaces();
+            if (mode === 'batch') {
+                loadBatchSavedRaces();
+                fetchBankrollForBooking();
+            }
         }
 
         // ── Batch Mode Logic ──
@@ -1015,6 +1049,9 @@
             _pinnacleMatchupIds = null;
             document.getElementById('refresh-odds-btn').disabled = true;
 
+            // Fetch bankroll for booking
+            await fetchBankrollForBooking();
+
             // Loading state per D-07
             btn.disabled = true;
             btn.textContent = '\u23F3 Loading from Pinnacle...';
@@ -1062,6 +1099,11 @@
                     sel.appendChild(opt);
                 });
                 pickerWrap.style.display = '';
+
+                // Update snapshot status bar
+                const totalMatchups = data.races.reduce((sum, r) => sum + r.pairs.length, 0);
+                document.getElementById('snapshot-status').textContent =
+                    `Last snapshot: ${new Date().toLocaleString()} — ${totalMatchups} matchups captured`;
 
                 // Per D-04: if single race, auto-select immediately
                 if (data.races.length === 1) {
@@ -1319,6 +1361,9 @@
             err.style.display = 'none';
             resultsDiv.style.display = 'none';
 
+            // Fetch bankroll for recommended stake calculations
+            await fetchBankrollForBooking();
+
             const pairs = getBatchPairs();
             if (pairs.length === 0) {
                 err.textContent = 'Add at least one H2H pair with both riders selected.';
@@ -1362,11 +1407,16 @@
             }
         }
 
+        // Store enriched pair data for booking (Pinnacle load or batch predict)
+        let _enrichedPairs = [];
+        let _currentBankroll = 0;
+
         function renderBatchResults(results, pairs) {
             const tbody = document.getElementById('batch-results-body');
             const summary = document.getElementById('batch-summary');
             const logBtn = document.getElementById('log-all-bets-btn');
             tbody.innerHTML = '';
+            _enrichedPairs = [];
 
             let valueBets = 0;
             let totalEdge = 0;
@@ -1374,7 +1424,7 @@
 
             results.forEach((r, i) => {
                 if (r.error) {
-                    tbody.innerHTML += `<tr><td>${i+1}</td><td colspan="9" style="color:var(--red);">Error: ${r.error}</td></tr>`;
+                    tbody.innerHTML += `<tr><td>${i+1}</td><td colspan="12" style="color:var(--red);">Error: ${r.error}</td></tr>`;
                     return;
                 }
                 successCount++;
@@ -1382,7 +1432,6 @@
                 const probA = r.rider_a.win_probability;
                 const probB = r.rider_b.win_probability;
                 const winner = probA >= probB ? r.rider_a : r.rider_b;
-                const loser = probA >= probB ? r.rider_b : r.rider_a;
 
                 // Find the value bet side
                 const kellyA = r.rider_a.kelly;
@@ -1392,6 +1441,11 @@
                 let edgeClass = '';
                 let halfKelly = '—';
                 let oddsStr = '—';
+                let shouldBet = false;
+                let recStake = 0;
+                let selectedOdds = 0;
+                let selectedEdge = 0;
+                let selectedProb = 0;
 
                 if (kellyA && kellyA.should_bet) {
                     valueSide = 'A';
@@ -1401,6 +1455,11 @@
                     oddsStr = kellyA.bookmaker_odds.toFixed(2);
                     totalEdge += kellyA.edge;
                     valueBets++;
+                    shouldBet = true;
+                    recStake = _currentBankroll > 0 ? (kellyA.quarter_kelly * _currentBankroll) : 0;
+                    selectedOdds = kellyA.bookmaker_odds;
+                    selectedEdge = kellyA.edge;
+                    selectedProb = probA;
                 } else if (kellyB && kellyB.should_bet) {
                     valueSide = 'B';
                     edge = kellyB.edge_pct;
@@ -1409,8 +1468,12 @@
                     oddsStr = kellyB.bookmaker_odds.toFixed(2);
                     totalEdge += kellyB.edge;
                     valueBets++;
+                    shouldBet = true;
+                    recStake = _currentBankroll > 0 ? (kellyB.quarter_kelly * _currentBankroll) : 0;
+                    selectedOdds = kellyB.bookmaker_odds;
+                    selectedEdge = kellyB.edge;
+                    selectedProb = 1.0 - probA;
                 } else {
-                    // Show best edge even if negative
                     if (kellyA) {
                         edge = kellyA.edge_pct;
                         edgeClass = kellyA.edge > 0 ? 'edge-positive' : 'edge-negative';
@@ -1427,6 +1490,36 @@
                     ? `<span class="value-yes">✅ ${valueSide === 'A' ? r.rider_a.name : r.rider_b.name}</span>`
                     : `<span class="value-no">❌</span>`;
 
+                // Booking columns
+                let recKellyCell, stakeCell, bookCell;
+                if (shouldBet) {
+                    recKellyCell = `<td style="color:var(--text);">$${recStake.toFixed(2)}</td>`;
+                    stakeCell = `<td><input type="number" class="stake-input" value="${recStake.toFixed(2)}" step="0.01" min="0" placeholder="e.g. 25.00"></td>`;
+                    bookCell = `<td><button class="btn btn-primary btn-sm book-btn" data-row-idx="${i}"${_currentBankroll <= 0 ? ' disabled title="Set your bankroll on the P&L page before booking bets."' : ''}>Book Bet</button></td>`;
+                } else {
+                    recKellyCell = `<td><span class="neutral">---</span></td>`;
+                    stakeCell = `<td><span class="neutral">---</span></td>`;
+                    bookCell = `<td><span class="neutral">---</span></td>`;
+                }
+
+                // Store enriched pair data for booking
+                _enrichedPairs.push({
+                    rider_a_name: r.rider_a.name,
+                    rider_b_name: r.rider_b.name,
+                    rider_a_url: r.rider_a.url || (pairs[i] ? pairs[i].rider_a_url : ''),
+                    rider_b_url: r.rider_b.url || (pairs[i] ? pairs[i].rider_b_url : ''),
+                    odds_a: pairs[i] ? pairs[i].odds_a : (kellyA ? kellyA.bookmaker_odds : 0),
+                    odds_b: pairs[i] ? pairs[i].odds_b : (kellyB ? kellyB.bookmaker_odds : 0),
+                    selection: valueSide,
+                    selectedOdds: selectedOdds,
+                    selectedEdge: selectedEdge,
+                    selectedProb: selectedProb,
+                    recommended_stake: recStake,
+                    should_bet: shouldBet,
+                    pinnacle_name_a: r.rider_a.name,
+                    pinnacle_name_b: r.rider_b.name,
+                });
+
                 tbody.innerHTML += `
                     <tr>
                         <td>${i + 1}</td>
@@ -1439,6 +1532,9 @@
                         <td class="${edgeClass}">${edge}</td>
                         <td>${halfKelly}</td>
                         <td>${valueLabel}</td>
+                        ${recKellyCell}
+                        ${stakeCell}
+                        ${bookCell}
                     </tr>
                 `;
             });
@@ -1450,8 +1546,167 @@
                 <div><span class="stat-value" style="color:var(--green)">${valueBets > 0 ? (totalEdge / valueBets * 100).toFixed(1) + '%' : '—'}</span><span class="stat-label">Avg Edge</span></div>
             `;
 
-            logBtn.style.display = valueBets > 0 ? '' : 'none';
-            logBtn.textContent = `📝 Log All ${valueBets} Value Bet${valueBets !== 1 ? 's' : ''}`;
+            logBtn.style.display = 'none';
+        }
+
+        // ── Book Bet click handler (event delegation) ──
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.book-btn');
+            if (!btn) return;
+
+            const idx = parseInt(btn.dataset.rowIdx);
+            const pair = _enrichedPairs[idx];
+            if (!pair || !pair.should_bet) return;
+
+            const row = btn.closest('tr');
+            const stakeInput = row.querySelector('.stake-input');
+            const stake = parseFloat(stakeInput.value);
+            if (isNaN(stake) || stake <= 0) {
+                alert('Enter a valid stake amount');
+                return;
+            }
+
+            const selection = pair.selection;
+            const selectedOdds = pair.selectedOdds;
+            const selectionName = selection === 'A' ? pair.pinnacle_name_a : pair.pinnacle_name_b;
+            const edgePct = (pair.selectedEdge * 100).toFixed(1);
+
+            const msg = `Book ${selectionName} @ ${selectedOdds.toFixed(2)} — Stake $${stake.toFixed(2)} CAD (¼ Kelly). This cannot be undone.`;
+            if (!window.confirm(msg)) return;
+
+            btn.disabled = true;
+            btn.textContent = 'Booking...';
+
+            const raceName = document.getElementById('batch-race-name').value || 'Unknown Race';
+            const raceDate = document.getElementById('batch-race-date').value || new Date().toISOString().split('T')[0];
+
+            // Build stage context from batch fields
+            const stageCtx = {
+                stage_url: '',
+                race_date: raceDate,
+                is_one_day_race: document.getElementById('batch-oneday').value === '1',
+                stage_type: document.getElementById('batch-stage-type').value || 'RR',
+                profile_icon: document.getElementById('batch-profile').value || '',
+                distance_km: parseFloat(document.getElementById('batch-distance').value) || 0,
+                vertical_meters: parseFloat(document.getElementById('batch-vert').value) || 0,
+                num_climbs: parseInt(document.getElementById('batch-climbs').value) || 0,
+            };
+
+            // Use Pinnacle race stage_context if available
+            if (_pinnacleRaces) {
+                const selIdx = parseInt(document.getElementById('pinnacle-race-select').value);
+                if (!isNaN(selIdx) && _pinnacleRaces[selIdx] && _pinnacleRaces[selIdx].stage_context) {
+                    const sc = _pinnacleRaces[selIdx].stage_context;
+                    stageCtx.stage_url = sc.stage_url || '';
+                    stageCtx.race_date = sc.race_date || raceDate;
+                    stageCtx.is_one_day_race = sc.is_one_day_race || false;
+                    stageCtx.stage_type = sc.stage_type || 'RR';
+                    stageCtx.profile_icon = sc.profile_icon || '';
+                    stageCtx.distance_km = sc.distance_km || sc.distance || 0;
+                    stageCtx.vertical_meters = sc.vertical_meters || 0;
+                    stageCtx.num_climbs = sc.num_climbs || 0;
+                }
+            }
+
+            fetch('/api/pnl/bet', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    stage_url: stageCtx.stage_url,
+                    race_name: raceName,
+                    race_date: stageCtx.race_date,
+                    rider_a_url: pair.rider_a_url,
+                    rider_a_name: pair.rider_a_name,
+                    rider_b_url: pair.rider_b_url,
+                    rider_b_name: pair.rider_b_name,
+                    selection: selection,
+                    decimal_odds: selectedOdds,
+                    model_prob: pair.selectedProb,
+                    kelly_fraction: pair.selectedEdge / (selectedOdds - 1),
+                    stake: stake,
+                    recommended_stake: pair.recommended_stake,
+                    model_used: 'CalibratedXGBoost',
+                    is_one_day_race: stageCtx.is_one_day_race ? 1 : 0,
+                    stage_type: stageCtx.stage_type,
+                    profile_icon: stageCtx.profile_icon,
+                    distance_km: stageCtx.distance_km,
+                    vertical_meters: stageCtx.vertical_meters,
+                    num_climbs: stageCtx.num_climbs,
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showInlineError(btn, data.error);
+                    btn.disabled = false;
+                    btn.textContent = 'Book Bet';
+                } else {
+                    btn.textContent = 'Booked!';
+                    btn.classList.remove('btn-primary');
+                    btn.classList.add('btn-success');
+                    setTimeout(() => {
+                        btn.disabled = true;
+                        btn.textContent = 'Booked';
+                        btn.style.opacity = '0.4';
+                    }, 2000);
+                }
+            })
+            .catch(err => {
+                showInlineError(btn, 'Bet could not be saved. Check your connection and try again. No bet was recorded.');
+                btn.disabled = false;
+                btn.textContent = 'Book Bet';
+            });
+        });
+
+        function showInlineError(btn, message) {
+            // Remove any existing inline error
+            const existing = btn.parentElement.querySelector('.inline-error');
+            if (existing) existing.remove();
+            const errEl = document.createElement('span');
+            errEl.className = 'inline-error';
+            errEl.textContent = message;
+            btn.parentElement.appendChild(errEl);
+            setTimeout(() => errEl.remove(), 8000);
+        }
+
+        // ── Capture Snapshot handler ──
+        async function captureSnapshot() {
+            const btn = document.getElementById('btn-capture-snapshot');
+            const statusEl = document.getElementById('snapshot-status');
+            btn.disabled = true;
+            btn.textContent = 'Capturing...';
+            try {
+                const res = await fetch('/api/pinnacle/snapshot', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({})
+                });
+                const data = await res.json();
+                if (data.error) {
+                    statusEl.textContent = 'Snapshot failed: ' + data.error;
+                    statusEl.style.color = 'var(--red)';
+                } else {
+                    statusEl.textContent = `Last snapshot: ${new Date().toLocaleString()} — ${data.saved} matchups captured`;
+                    statusEl.style.color = 'var(--muted)';
+                }
+            } catch(e) {
+                statusEl.textContent = 'Snapshot failed: ' + e.message;
+                statusEl.style.color = 'var(--red)';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Capture Snapshot';
+            }
+        }
+
+        // ── Bankroll check for bet booking ──
+        async function fetchBankrollForBooking() {
+            try {
+                const res = await fetch('/api/pnl/total-bankroll');
+                const data = await res.json();
+                _currentBankroll = data.bankroll || 0;
+            } catch(e) {
+                _currentBankroll = 0;
+            }
         }
 
         async function logAllValueBets() {
