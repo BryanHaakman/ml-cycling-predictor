@@ -426,16 +426,19 @@ def api_set_bankroll():
 @app.route("/api/pnl/bet", methods=["POST"])
 def api_place_bet():
     data = request.json
-    required = ["stage_url", "race_name", "rider_a_url", "rider_a_name",
+    required = ["race_name", "rider_a_url", "rider_a_name",
                  "rider_b_url", "rider_b_name", "selection", "decimal_odds",
                  "model_prob", "kelly_fraction", "stake"]
     missing = [f for f in required if not data.get(f)]
     if missing:
         return jsonify({"error": f"Missing fields: {missing}"}), 400
 
+    # Generate synthetic stage_url if not provided (Pinnacle flow has no PCS stage)
+    stage_url = data.get("stage_url", "") or f"pinnacle/{data['race_name'].replace(' ', '-').lower()}"
+
     try:
         bet_id = place_bet(
-            stage_url=data["stage_url"],
+            stage_url=stage_url,
             race_name=data["race_name"],
             race_date=data.get("race_date", ""),
             rider_a_url=data["rider_a_url"],

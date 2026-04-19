@@ -288,154 +288,10 @@
             <nav style="margin-top:0.5rem;"><a href="/" style="color:var(--accent);text-decoration:none;margin-right:1rem;">Predictions</a><a href="/results" style="color:var(--muted);text-decoration:none;margin-right:1rem;">Results</a><a href="/pnl" style="color:var(--muted);text-decoration:none;margin-right:1rem;">P&L Tracker</a><a href="/admin" style="color:var(--muted);text-decoration:none;">Admin</a></nav>
         </header>
 
-        <div class="top-mode-toggle">
-            <button class="top-mode-btn active" id="tmb-single" onclick="setTopMode('single')">Single H2H</button>
-            <button class="top-mode-btn" id="tmb-batch" onclick="setTopMode('batch')">Batch H2H</button>
-        </div>
-
-        <div id="single-mode">
-
-        <div class="form-grid">
-            <div class="form-group">
-                <label>Rider A</label>
-                <div class="autocomplete-wrap">
-                    <input type="text" id="rider-a-input" placeholder="Search rider..." autocomplete="off">
-                    <div class="autocomplete-list" id="rider-a-list"></div>
-                    <input type="hidden" id="rider-a-url">
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Rider B</label>
-                <div class="autocomplete-wrap">
-                    <input type="text" id="rider-b-input" placeholder="Search rider..." autocomplete="off">
-                    <div class="autocomplete-list" id="rider-b-list"></div>
-                    <input type="hidden" id="rider-b-url">
-                </div>
-            </div>
-            <div class="form-group full">
-                <label>Race Setup</label>
-                <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;align-items:center;flex-wrap:wrap;">
-                    <select id="saved-race-select" style="flex:1;min-width:200px;padding:0.5rem 0.8rem;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;">
-                        <option value="">— New Race —</option>
-                    </select>
-                    <button type="button" class="mode-btn" id="btn-save-race" onclick="saveCurrentRace()" title="Save race config">💾 Save</button>
-                    <button type="button" class="mode-btn" id="btn-delete-race" onclick="deleteSelectedRace()" title="Delete saved race" style="display:none;">🗑️</button>
-                    <button type="button" class="mode-btn" id="mode-db" onclick="setRaceMode('db')">From Database</button>
-                </div>
-                <div id="race-manual-section">
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;">
-                        <div class="form-group">
-                            <label>Race Name</label>
-                            <input type="text" id="manual-race-name" placeholder="e.g. Tour de France Stage 1">
-                        </div>
-                        <div class="form-group">
-                            <label>Race Date</label>
-                            <input type="date" id="manual-race-date">
-                        </div>
-                        <div class="form-group">
-                            <label>Distance (km)</label>
-                            <input type="number" id="manual-distance" placeholder="e.g. 200" step="0.1" min="0">
-                        </div>
-                        <div class="form-group">
-                            <label>Vertical Metres</label>
-                            <input type="number" id="manual-vert" placeholder="e.g. 3500" step="1" min="0">
-                        </div>
-                        <div class="form-group">
-                            <label>Profile Type</label>
-                            <select id="manual-profile">
-                                <option value="p1">p1 — Flat</option>
-                                <option value="p2">p2 — Hilly (flat finish)</option>
-                                <option value="p3" selected>p3 — Hilly (uphill finish)</option>
-                                <option value="p4">p4 — Mountain</option>
-                                <option value="p5">p5 — Mountain (summit finish)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Stage Type</label>
-                            <select id="manual-stage-type">
-                                <option value="RR" selected>Road Race</option>
-                                <option value="ITT">Individual Time Trial</option>
-                                <option value="TTT">Team Time Trial</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>One-Day Race?</label>
-                            <select id="manual-oneday">
-                                <option value="0">No (stage race)</option>
-                                <option value="1">Yes (one-day race)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Number of Climbs</label>
-                            <input type="number" id="manual-climbs" placeholder="e.g. 5" step="1" min="0">
-                        </div>
-                        <div class="form-group">
-                            <label>Race Tier (UCI Category)</label>
-                            <select id="manual-uci-tour">
-                                <option value="">Unknown / Other</option>
-                                <option value="1.UWT">1.UWT — World Tour (1-day)</option>
-                                <option value="2.UWT">2.UWT — World Tour (stage)</option>
-                                <option value="WC">WC — World Championships</option>
-                                <option value="1.Pro">1.Pro — ProSeries (1-day)</option>
-                                <option value="2.Pro">2.Pro — ProSeries (stage)</option>
-                                <option value="1.1">1.1 — Class 1</option>
-                                <option value="2.1">2.1 — Class 1 (stage)</option>
-                            </select>
-                        </div>
-                        <div class="form-group full">
-                            <label>Race Base URL (optional — for same-race history)</label>
-                            <input type="text" id="manual-race-url" placeholder="e.g. race/tour-de-france">
-                        </div>
-                    </div>
-                </div>
-                <div id="race-db-section" style="display:none;">
-                    <div class="autocomplete-wrap">
-                        <input type="text" id="race-input" placeholder="Search race from database..." autocomplete="off">
-                        <div class="autocomplete-list" id="race-list"></div>
-                        <input type="hidden" id="stage-url">
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="odds-section">
-            <div class="odds-card">
-                <h3>Bookmaker Odds — Rider A</h3>
-                <input type="number" id="odds-a" placeholder="Decimal odds e.g. 2.50" step="0.01" min="1.01">
-            </div>
-            <div class="odds-card">
-                <h3>Bookmaker Odds — Rider B</h3>
-                <input type="number" id="odds-b" placeholder="Decimal odds e.g. 1.65" step="0.01" min="1.01">
-            </div>
-        </div>
-
-        <button class="btn" id="predict-btn" onclick="predict()">Predict Head-to-Head</button>
-
-        <div id="error" class="error-msg" style="display:none;"></div>
-
-        <div id="results">
-            <div class="results-header">Prediction Result</div>
-            <div class="matchup">
-                <div class="rider-card" id="card-a">
-                    <div class="name" id="name-a">—</div>
-                    <div class="prob-label">Win Probability</div>
-                    <div class="prob" id="prob-a">—</div>
-                </div>
-                <div class="vs">VS</div>
-                <div class="rider-card" id="card-b">
-                    <div class="name" id="name-b">—</div>
-                    <div class="prob-label">Win Probability</div>
-                    <div class="prob" id="prob-b">—</div>
-                </div>
-            </div>
-            <div id="kelly-results"></div>
-        </div>
-
-        <div class="stats-bar" id="stats-bar">Loading stats...</div>
-    </div><!-- end single-mode -->
+        <!-- Single H2H removed — Batch H2H is the primary workflow -->
 
     <!-- ── Batch Mode ────────────────────────────────────────────── -->
-    <div id="batch-mode" style="display:none;">
+    <div id="batch-mode">
         <div class="pinnacle-row">
             <div class="form-group" style="flex:0 0 auto;">
                 <label style="visibility:hidden;">Action</label>
@@ -927,22 +783,12 @@
         // Load stats + saved races
         fetch('/api/stats').then(r => r.json()).then(s => {
             const statsText = `Database: ${s.races} races · ${s.stages} stages · ${s.results.toLocaleString()} results · ${s.riders} riders · Years: ${s.year_range}`;
-            document.getElementById('stats-bar').textContent = statsText;
             document.getElementById('stats-bar-batch').textContent = statsText;
         }).catch(() => {});
-        loadSavedRaces();
 
-        // ── Top Mode Toggle (Single vs Batch) ──
-        function setTopMode(mode) {
-            document.getElementById('tmb-single').classList.toggle('active', mode === 'single');
-            document.getElementById('tmb-batch').classList.toggle('active', mode === 'batch');
-            document.getElementById('single-mode').style.display = mode === 'single' ? '' : 'none';
-            document.getElementById('batch-mode').style.display = mode === 'batch' ? '' : 'none';
-            if (mode === 'batch') {
-                loadBatchSavedRaces();
-                fetchBankrollForBooking();
-            }
-        }
+        // Batch mode is always active — load saved races and bankroll on init
+        loadBatchSavedRaces();
+        fetchBankrollForBooking();
 
         // ── Batch Mode Logic ──
         let batchPairCounter = 0;
@@ -1490,17 +1336,12 @@
                     ? `<span class="value-yes">✅ ${valueSide === 'A' ? r.rider_a.name : r.rider_b.name}</span>`
                     : `<span class="value-no">❌</span>`;
 
-                // Booking columns
-                let recKellyCell, stakeCell, bookCell;
-                if (shouldBet) {
-                    recKellyCell = `<td style="color:var(--text);">$${recStake.toFixed(2)}</td>`;
-                    stakeCell = `<td><input type="number" class="stake-input" value="${recStake.toFixed(2)}" step="0.01" min="0" placeholder="e.g. 25.00"></td>`;
-                    bookCell = `<td><button class="btn btn-primary btn-sm book-btn" data-row-idx="${i}"${_currentBankroll <= 0 ? ' disabled title="Set your bankroll on the P&L page before booking bets."' : ''}>Book Bet</button></td>`;
-                } else {
-                    recKellyCell = `<td><span class="neutral">---</span></td>`;
-                    stakeCell = `<td><span class="neutral">---</span></td>`;
-                    bookCell = `<td><span class="neutral">---</span></td>`;
-                }
+                // Booking columns — all rows are bookable
+                const recKellyCell = shouldBet
+                    ? `<td style="color:var(--text);">$${recStake.toFixed(2)}</td>`
+                    : `<td><span class="neutral">---</span></td>`;
+                const stakeCell = `<td><input type="number" class="stake-input" value="${shouldBet ? recStake.toFixed(2) : ''}" step="0.01" min="0" placeholder="e.g. 25.00"></td>`;
+                const bookCell = `<td><button class="btn btn-primary btn-sm book-btn" data-row-idx="${i}"${_currentBankroll <= 0 ? ' disabled title="Set your bankroll on the P&L page before booking bets."' : ''}>Book Bet</button></td>`;
 
                 // Store enriched pair data for booking
                 _enrichedPairs.push({
@@ -1556,7 +1397,7 @@
 
             const idx = parseInt(btn.dataset.rowIdx);
             const pair = _enrichedPairs[idx];
-            if (!pair || !pair.should_bet) return;
+            if (!pair) return;
 
             const row = btn.closest('tr');
             const stakeInput = row.querySelector('.stake-input');
@@ -1566,12 +1407,30 @@
                 return;
             }
 
-            const selection = pair.selection;
-            const selectedOdds = pair.selectedOdds;
-            const selectionName = selection === 'A' ? pair.pinnacle_name_a : pair.pinnacle_name_b;
-            const edgePct = (pair.selectedEdge * 100).toFixed(1);
+            let selection = pair.selection;
+            let selectedOdds = pair.selectedOdds;
 
-            const msg = `Book ${selectionName} @ ${selectedOdds.toFixed(2)} — Stake $${stake.toFixed(2)} CAD (¼ Kelly). This cannot be undone.`;
+            // If no value side pre-selected, ask the user which rider to back
+            if (!selection) {
+                const pick = prompt(
+                    `No value side detected. Which rider do you want to back?\n\n` +
+                    `A: ${pair.pinnacle_name_a} @ ${pair.odds_a.toFixed(2)}\n` +
+                    `B: ${pair.pinnacle_name_b} @ ${pair.odds_b.toFixed(2)}\n\n` +
+                    `Type A or B:`
+                );
+                if (!pick) return;
+                selection = pick.trim().toUpperCase();
+                if (selection !== 'A' && selection !== 'B') {
+                    alert('Please enter A or B');
+                    return;
+                }
+                selectedOdds = selection === 'A' ? pair.odds_a : pair.odds_b;
+            }
+
+            const selectionName = selection === 'A' ? pair.pinnacle_name_a : pair.pinnacle_name_b;
+            const edgePct = pair.selectedEdge ? (pair.selectedEdge * 100).toFixed(1) : '0.0';
+
+            const msg = `Book ${selectionName} @ ${selectedOdds.toFixed(2)} — Stake $${stake.toFixed(2)} CAD. This cannot be undone.`;
             if (!window.confirm(msg)) return;
 
             btn.disabled = true;
@@ -1621,8 +1480,8 @@
                     rider_b_name: pair.rider_b_name,
                     selection: selection,
                     decimal_odds: selectedOdds,
-                    model_prob: pair.selectedProb,
-                    kelly_fraction: pair.selectedEdge / (selectedOdds - 1),
+                    model_prob: pair.selectedProb || 0.5,
+                    kelly_fraction: pair.selectedEdge ? pair.selectedEdge / (selectedOdds - 1) : 0,
                     stake: stake,
                     recommended_stake: pair.recommended_stake,
                     model_used: 'CalibratedXGBoost',
